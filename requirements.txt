@@ -3,4 +3,9 @@ pandas>=1.2.0
 beautifulsoup4>=4.9.3
 tqdm>=4.60.0
 openpyxl>=3.0.7
-Pillow>=10.0.0 
+Pillow>=10.0.0
+lxml
+urllib3
+matplotlib
+seaborn
+pathlib2 

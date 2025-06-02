@@ -18,6 +18,15 @@ import concurrent.futures
 from tqdm import tqdm
 import logging
 import random
+import json
+from pathlib import Path
+try:
+    from database_manager import TaifexDatabaseManager
+    from daily_report_generator import DailyReportGenerator
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    print("警告: 資料庫模組未找到，將使用傳統檔案存儲方式")
 
 # 設定基本參數
 BASE_URL = 'https://www.taifex.com.tw/cht/3/futContractsDate'
@@ -911,6 +920,15 @@ def main():
     logger.info(f"契約: {', '.join(args.contracts)}")
     logger.info(f"身份別: {', '.join(args.identities) if args.identities else '不爬取身份別資料'}")
     
+    # 初始化資料庫管理器
+    if DB_AVAILABLE:
+        db_manager = TaifexDatabaseManager()
+        report_generator = DailyReportGenerator(db_manager)
+        logger.info("資料庫系統已啟用")
+    else:
+        db_manager = None
+        report_generator = None
+    
     # 創建爬蟲實例
     crawler = TaifexCrawler(
         output_dir=args.output_dir,
@@ -936,15 +954,123 @@ def main():
             identity_str = '_'.join(args.identities) if args.identities else 'no_identity'
             args.filename = f"taifex_{date_range}_{contracts_str}_{identity_str}"
         
-        # 保存資料
+        # 1. 保存到傳統檔案格式
         csv_path, excel_path = crawler.save_data(df, args.filename)
         logger.info(f"已成功爬取 {len(df)} 筆資料")
         logger.info(f"CSV 檔案: {csv_path}")
         logger.info(f"Excel 檔案: {excel_path}")
+        
+        # 2. 保存到資料庫（如果可用）
+        if db_manager and not df.empty:
+            try:
+                # 轉換資料格式以符合資料庫結構
+                db_df = prepare_data_for_db(df)
+                db_manager.insert_data(db_df)
+                logger.info("資料已成功存入資料庫")
+                
+                # 生成30天日報（如果資料足夠）
+                recent_data = db_manager.get_recent_data(30)
+                if not recent_data.empty and len(recent_data) > 50:  # 確保有足夠資料
+                    report = report_generator.generate_30day_report()
+                    if report:
+                        logger.info("30天分析報告已生成")
+                
+                # 匯出最新30天資料到固定檔案
+                latest_30d_path = Path(args.output_dir) / "台期所最新30天資料.xlsx"
+                db_manager.export_to_excel(latest_30d_path, days=30)
+                logger.info(f"最新30天資料已匯出: {latest_30d_path}")
+                
+            except Exception as e:
+                logger.error(f"資料庫操作失敗: {e}")
+        
     else:
         logger.warning("未爬取到任何資料")
     
     logger.info("程式執行完成")
+
+
+def prepare_data_for_db(df):
+    """將爬蟲資料轉換為資料庫格式"""
+    if df.empty:
+        return pd.DataFrame()
+    
+    # 資料庫需要的欄位
+    required_columns = [
+        'date', 'contract_code', 'identity_type', 'position_type',
+        'long_position', 'short_position', 'net_position'
+    ]
+    
+    db_records = []
+    
+    for _, row in df.iterrows():
+        base_record = {
+            'date': row.get('交易日期', ''),
+            'contract_code': row.get('契約', ''),
+        }
+        
+        # 處理身份別資料
+        if '身份別' in df.columns:
+            base_record['identity_type'] = row.get('身份別', '')
+        else:
+            base_record['identity_type'] = '總計'
+        
+        # 處理多方部位
+        if any(col for col in df.columns if '多方' in col and '口數' in col):
+            long_cols = [col for col in df.columns if '多方' in col and '口數' in col]
+            long_position = sum(row.get(col, 0) for col in long_cols)
+            
+            record_long = base_record.copy()
+            record_long.update({
+                'position_type': '多方',
+                'long_position': long_position,
+                'short_position': 0,
+                'net_position': long_position
+            })
+            db_records.append(record_long)
+        
+        # 處理空方部位
+        if any(col for col in df.columns if '空方' in col and '口數' in col):
+            short_cols = [col for col in df.columns if '空方' in col and '口數' in col]
+            short_position = sum(row.get(col, 0) for col in short_cols)
+            
+            record_short = base_record.copy()
+            record_short.update({
+                'position_type': '空方',
+                'long_position': 0,
+                'short_position': short_position,
+                'net_position': -short_position
+            })
+            db_records.append(record_short)
+        
+        # 處理淨部位
+        if any(col for col in df.columns if '淨部位' in col):
+            net_cols = [col for col in df.columns if '淨部位' in col]
+            net_position = sum(row.get(col, 0) for col in net_cols)
+            
+            record_net = base_record.copy()
+            record_net.update({
+                'position_type': '淨部位',
+                'long_position': 0,
+                'short_position': 0,
+                'net_position': net_position
+            })
+            db_records.append(record_net)
+    
+    if not db_records:
+        # 如果沒有識別到標準格式，創建基本記錄
+        for _, row in df.iterrows():
+            record = {
+                'date': row.get('交易日期', ''),
+                'contract_code': row.get('契約', ''),
+                'identity_type': row.get('身份別', '總計'),
+                'position_type': '未分類',
+                'long_position': 0,
+                'short_position': 0,
+                'net_position': 0
+            }
+            db_records.append(record)
+    
+    return pd.DataFrame(db_records)
 
 
 if __name__ == "__main__":

@@ -53,27 +53,73 @@ jobs:
       run: |
         echo "=== 輸出目錄內容 ==="
         ls -la output/
+        echo ""
+        echo "=== 資料庫檔案 ==="
+        if [ -d "data" ]; then
+          ls -la data/
+        fi
+        echo ""
+        echo "=== 報告檔案 ==="
+        if [ -d "reports" ]; then
+          ls -la reports/
+        fi
+        echo ""
         echo "=== 日誌內容 (最後50行) ==="
         if [ -f taifex_crawler.log ]; then
           tail -50 taifex_crawler.log
         fi
         
+    - name: 提交固定資料檔案
+      run: |
+        # 檢查是否有重要的固定檔案需要提交
+        IMPORTANT_FILES=(
+          "output/台期所最新30天資料.xlsx"
+          "data/taifex_data.db"
+        )
+        
+        HAS_CHANGES=false
+        
+        # 檢查每個重要檔案
+        for file in "${IMPORTANT_FILES[@]}"; do
+          if [ -f "$file" ]; then
+            git add "$file"
+            echo "已添加: $file"
+            HAS_CHANGES=true
+          fi
+        done
+        
+        # 添加報告檔案
+        if [ -d "reports" ]; then
+          git add reports/
+          echo "已添加報告目錄"
+          HAS_CHANGES=true
+        fi
+        
+        # 添加日誌
+        if [ -f taifex_crawler.log ]; then
+          git add taifex_crawler.log
+          HAS_CHANGES=true
+        fi
+        
+        # 提交變更
+        if [ "$HAS_CHANGES" = true ]; then
+          git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料和分析報告" || echo "沒有需要提交的變更"
+        else
+          echo "沒有重要檔案需要提交"
+        fi
+    
     - name: 設定Git使用者
       run: |
         git config --global user.name 'GitHub Actions Bot'
         git config --global user.email 'actions@github.com'
         
-    - name: 提交並推送資料
+    - name: 推送更新
       run: |
-        git add output/
-        git add *.log
-        
-        # 檢查是否有變更
-        if git diff --staged --quiet; then
-          echo "沒有新資料需要提交"
+        # 檢查是否有待推送的提交
+        if git diff --quiet HEAD~1 HEAD 2>/dev/null; then
+          echo "沒有新的提交需要推送"
         else
-          git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料"
-          git push
+          git push || echo "推送失敗，可能沒有變更"
         fi
         
     - name: 上傳執行日誌
