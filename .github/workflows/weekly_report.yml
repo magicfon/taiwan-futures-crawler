@@ -1,0 +1,50 @@
+name: 每週資料報告
+
+on:
+  schedule:
+    # 每週日台北時間 18:00 執行 (UTC 10:00)
+    - cron: '0 10 * * 0'
+  workflow_dispatch:
+
+jobs:
+  weekly-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 檢出程式碼
+      uses: actions/checkout@v4
+      
+    - name: 統計資料檔案
+      run: |
+        echo "=== 本週台期所資料爬取報告 ===" > weekly_report.txt
+        echo "生成時間: $(date '+%Y-%m-%d %H:%M:%S')" >> weekly_report.txt
+        echo "" >> weekly_report.txt
+        
+        if [ -d "output" ]; then
+          echo "📊 資料檔案統計:" >> weekly_report.txt
+          echo "CSV檔案數量: $(find output -name "*.csv" | wc -l)" >> weekly_report.txt
+          echo "Excel檔案數量: $(find output -name "*.xlsx" | wc -l)" >> weekly_report.txt
+          echo "" >> weekly_report.txt
+          
+          echo "📁 最新檔案:" >> weekly_report.txt
+          ls -lt output/*.csv 2>/dev/null | head -5 >> weekly_report.txt || echo "無CSV檔案" >> weekly_report.txt
+          echo "" >> weekly_report.txt
+          
+          echo "💾 資料夾大小:" >> weekly_report.txt
+          du -sh output/ >> weekly_report.txt
+        else
+          echo "❌ 輸出目錄不存在" >> weekly_report.txt
+        fi
+        
+        echo "" >> weekly_report.txt
+        echo "🤖 此報告由GitHub Actions自動生成" >> weekly_report.txt
+        
+    - name: 顯示報告
+      run: cat weekly_report.txt
+      
+    - name: 上傳報告
+      uses: actions/upload-artifact@v3
+      with:
+        name: weekly-report-${{ github.run_number }}
+        path: weekly_report.txt
+        retention-days: 90 

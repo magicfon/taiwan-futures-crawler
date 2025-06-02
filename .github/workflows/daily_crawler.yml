@@ -1,0 +1,87 @@
+name: 每日台期所資料爬取
+
+on:
+  schedule:
+    # 每日台北時間 09:00 執行 (UTC 01:00)
+    - cron: '0 1 * * *'
+  # 允許手動觸發
+  workflow_dispatch:
+    inputs:
+      date_range:
+        description: '日期範圍 (格式: YYYY-MM-DD,YYYY-MM-DD 或 today)'
+        required: false
+        default: 'today'
+      contracts:
+        description: '契約代碼 (用逗號分隔，如: TX,TE,MTX)'
+        required: false
+        default: 'TX,TE,MTX'
+
+jobs:
+  crawl-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 檢出程式碼
+      uses: actions/checkout@v4
+      
+    - name: 設定Python環境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: 安裝相依套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 建立輸出目錄
+      run: |
+        mkdir -p output
+        mkdir -p logs
+        
+    - name: 執行爬蟲
+      run: |
+        if [ "${{ github.event.inputs.date_range }}" = "today" ] || [ -z "${{ github.event.inputs.date_range }}" ]; then
+          # 執行今日資料爬取
+          python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+        else
+          # 執行指定日期範圍爬取
+          python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+        fi
+        
+    - name: 檢查輸出文件
+      run: |
+        echo "=== 輸出目錄內容 ==="
+        ls -la output/
+        echo "=== 日誌內容 (最後50行) ==="
+        if [ -f taifex_crawler.log ]; then
+          tail -50 taifex_crawler.log
+        fi
+        
+    - name: 設定Git使用者
+      run: |
+        git config --global user.name 'GitHub Actions Bot'
+        git config --global user.email 'actions@github.com'
+        
+    - name: 提交並推送資料
+      run: |
+        git add output/
+        git add *.log
+        
+        # 檢查是否有變更
+        if git diff --staged --quiet; then
+          echo "沒有新資料需要提交"
+        else
+          git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料"
+          git push
+        fi
+        
+    - name: 上傳執行日誌
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: crawler-logs-${{ github.run_number }}
+        path: |
+          taifex_crawler.log
+          output/
+        retention-days: 30 

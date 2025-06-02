@@ -1,0 +1,27 @@
+name: 失敗通知
+
+on:
+  workflow_run:
+    workflows: ["每日台期所資料爬取"]
+    types:
+      - completed
+
+jobs:
+  notify-failure:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    
+    steps:
+    - name: 建立失敗報告
+      run: |
+        echo "🚨 台期所爬蟲執行失敗" > failure_report.txt
+        echo "執行時間: $(date)" >> failure_report.txt
+        echo "工作流程: ${{ github.event.workflow_run.name }}" >> failure_report.txt
+        echo "執行ID: ${{ github.event.workflow_run.id }}" >> failure_report.txt
+        echo "分支: ${{ github.event.workflow_run.head_branch }}" >> failure_report.txt
+        echo "查看詳情: ${{ github.event.workflow_run.html_url }}" >> failure_report.txt
+        
+    - name: 輸出失敗資訊
+      run: |
+        cat failure_report.txt
+        echo "::warning::台期所爬蟲執行失敗，請檢查工作流程日誌" 
