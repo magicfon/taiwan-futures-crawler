@@ -14,7 +14,7 @@ on:
       contracts:
         description: '契約代碼 (用逗號分隔，如: TX,TE,MTX)'
         required: false
-        default: 'TX,TE,MTX'
+        default: 'TX,TE,MTX,ZMX,NQF'
 
 jobs:
   crawl-data:
