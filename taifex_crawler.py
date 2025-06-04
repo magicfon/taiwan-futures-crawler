@@ -111,17 +111,15 @@ class TaifexCrawler:
         Returns:
             解析後的資料字典或 None (如果無資料)
         """
-        # 檢查日期是否超過今天
+        # 簡化日期檢查，只記錄而不阻止爬取
         try:
             target_date = datetime.datetime.strptime(date_str, "%Y/%m/%d")
             today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             
             if target_date > today:
-                logger.warning(f"日期 {date_str} 超過今天，跳過爬取")
-                return None
+                logger.info(f"嘗試爬取未來日期 {date_str}，台期所可能尚未公布資料")
         except Exception as e:
-            logger.error(f"日期格式檢查錯誤: {str(e)}")
-            # 忽略錯誤，繼續執行
+            logger.debug(f"日期格式檢查: {str(e)}")
         
         for retry in range(self.max_retries):
             try:
@@ -545,21 +543,22 @@ class TaifexCrawler:
         if not contracts:
             contracts = CONTRACTS
         
-        # 確保結束日期不超過今天
+        # 寬鬆的日期檢查 - 允許爬取今天和合理的未來日期
         today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if end_date > today:
-            logger.warning(f"結束日期 {end_date.strftime('%Y/%m/%d')} 超過今天，將設定為今天 {today.strftime('%Y/%m/%d')}")
-            end_date = today
+        max_future_days = 7  # 允許未來7天內的日期
+        max_allowed_date = today + datetime.timedelta(days=max_future_days)
         
-        # 如果開始日期超過今天，則無法爬取
-        if start_date > today:
-            logger.warning(f"開始日期 {start_date.strftime('%Y/%m/%d')} 超過今天，無法爬取資料")
-            return pd.DataFrame()
+        if end_date > max_allowed_date:
+            logger.warning(f"結束日期 {end_date.strftime('%Y/%m/%d')} 過於未來，調整為 {max_allowed_date.strftime('%Y/%m/%d')}")
+            end_date = max_allowed_date
+        
+        # 如果開始日期過於未來，給予警告但不阻止
+        if start_date > max_allowed_date:
+            logger.warning(f"開始日期 {start_date.strftime('%Y/%m/%d')} 過於未來，台期所可能尚未公布資料")
         
         # 計算總任務數量（用於進度條）
         date_range = [start_date + datetime.timedelta(days=x) for x in range((end_date - start_date).days + 1)]
-        # 過濾只包含今天之前的日期
-        date_range = [d for d in date_range if d <= today]
+        # 包含今天和未來幾天的日期（讓台期所決定是否有資料）
         business_days = [d for d in date_range if self._is_business_day(d)]
         
         total_tasks = len(business_days) * len(contracts)
