@@ -45,13 +45,30 @@ jobs:
         mkdir -p charts
         
     - name: 設定Google Sheets認證
-      if: ${{ env.GOOGLE_SHEETS_CREDENTIALS != '' }}
       env:
         GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: |
-        mkdir -p config
-        echo "$GOOGLE_SHEETS_CREDENTIALS" > config/google_sheets_credentials.json
-        echo "Google Sheets認證已設定"
+        if [ -n "$GOOGLE_SHEETS_CREDENTIALS" ]; then
+          mkdir -p config
+          echo "$GOOGLE_SHEETS_CREDENTIALS" > config/google_sheets_credentials.json
+          echo "✅ Google Sheets認證已設定（來自GitHub Secret）"
+        else
+          echo "⚠️ 未設定GOOGLE_SHEETS_CREDENTIALS Secret，跳過Google Sheets功能"
+        fi
+        
+    - name: 設定Telegram通知
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+          echo "✅ Telegram通知已設定（來自GitHub Secrets）"
+          # 導出環境變數供後續步驟使用
+          echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" >> $GITHUB_ENV
+          echo "TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID" >> $GITHUB_ENV
+        else
+          echo "⚠️ 未設定Telegram Secrets，跳過Telegram通知功能"
+        fi
         
     - name: 執行爬蟲 (第一次嘗試)
       id: first_attempt

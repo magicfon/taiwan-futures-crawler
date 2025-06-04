@@ -1040,22 +1040,24 @@ def main():
                                 # 生成摘要文字
                                 summary_text = chart_generator.generate_summary_text(chart_data)
                                 
-                                # 初始化Telegram通知器
-                                telegram_bot_token = "7088578241:AAErbP-EuoRGClRZ3FFfPMjl8k3CFpqgn8E"
-                                telegram_chat_id = "1038401606"
-                                notifier = TelegramNotifier(telegram_bot_token, telegram_chat_id)
+                                # 初始化Telegram通知器（從環境變數讀取配置）
+                                notifier = TelegramNotifier()
                                 
-                                # 測試連線
-                                if notifier.test_connection():
-                                    # 發送圖表報告
-                                    success = notifier.send_chart_report(chart_paths, summary_text)
-                                    
-                                    if success:
-                                        logger.info("📱 圖表已成功發送到Telegram")
+                                # 檢查Telegram是否已配置
+                                if notifier.is_configured():
+                                    # 測試連線
+                                    if notifier.test_connection():
+                                        # 發送圖表報告
+                                        success = notifier.send_chart_report(chart_paths, summary_text)
+                                        
+                                        if success:
+                                            logger.info("📱 圖表已成功發送到Telegram")
+                                        else:
+                                            logger.warning("⚠️ Telegram發送部分失敗")
                                     else:
-                                        logger.warning("⚠️ Telegram發送部分失敗")
+                                        logger.error("❌ Telegram連線失敗，無法發送圖表")
                                 else:
-                                    logger.error("❌ Telegram連線失敗，無法發送圖表")
+                                    logger.info("ℹ️ Telegram未配置，跳過圖表推送功能")
                             else:
                                 logger.warning("⚠️ 沒有生成任何圖表")
                         else:

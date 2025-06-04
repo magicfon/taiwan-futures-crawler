@@ -15,18 +15,30 @@ import time
 logger = logging.getLogger("Telegram通知")
 
 class TelegramNotifier:
-    def __init__(self, bot_token, chat_id):
+    def __init__(self, bot_token=None, chat_id=None):
         """
         初始化Telegram通知器
         
         Args:
-            bot_token: Telegram Bot的API Token
-            chat_id: 目標聊天室ID
+            bot_token: Telegram Bot的API Token（若未提供則從環境變數讀取）
+            chat_id: 目標聊天室ID（若未提供則從環境變數讀取）
         """
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.base_url = f"https://api.telegram.org/bot{bot_token}"
+        # 優先使用傳入的參數，否則從環境變數讀取
+        self.bot_token = bot_token or os.environ.get('TELEGRAM_BOT_TOKEN')
+        self.chat_id = chat_id or os.environ.get('TELEGRAM_CHAT_ID')
         
+        if not self.bot_token:
+            logger.warning("⚠️ 未設定Telegram Bot Token，Telegram通知功能將無法使用")
+        
+        if not self.chat_id:
+            logger.warning("⚠️ 未設定Telegram Chat ID，Telegram通知功能將無法使用")
+        
+        self.base_url = f"https://api.telegram.org/bot{self.bot_token}" if self.bot_token else None
+        
+    def is_configured(self):
+        """檢查是否已正確配置"""
+        return bool(self.bot_token and self.chat_id)
+    
     def send_message(self, text, parse_mode="Markdown"):
         """
         發送文字訊息
@@ -38,6 +50,10 @@ class TelegramNotifier:
         Returns:
             bool: 是否發送成功
         """
+        if not self.is_configured():
+            logger.warning("Telegram未配置，跳過訊息發送")
+            return False
+            
         try:
             url = f"{self.base_url}/sendMessage"
             payload = {
@@ -79,6 +95,10 @@ class TelegramNotifier:
         Returns:
             bool: 是否發送成功
         """
+        if not self.is_configured():
+            logger.warning("Telegram未配置，跳過圖片發送")
+            return False
+            
         try:
             if not os.path.exists(photo_path):
                 logger.error(f"圖片檔案不存在: {photo_path}")

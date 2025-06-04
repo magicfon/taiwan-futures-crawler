@@ -44,6 +44,36 @@ class GoogleSheetsManager:
     
     def setup_credentials(self):
         """設定Google Sheets認證"""
+        # 優先從環境變數讀取憑證（適用於GitHub Actions）
+        credentials_json = os.environ.get('GOOGLE_SHEETS_CREDENTIALS')
+        
+        if credentials_json:
+            try:
+                self.logger.info("從環境變數載入Google憑證")
+                credentials_data = json.loads(credentials_json)
+                
+                # 設定權限範圍
+                scopes = [
+                    'https://www.googleapis.com/auth/spreadsheets',
+                    'https://www.googleapis.com/auth/drive'
+                ]
+                
+                # 從字典建立認證
+                credentials = Credentials.from_service_account_info(
+                    credentials_data, 
+                    scopes=scopes
+                )
+                
+                # 建立gspread客戶端
+                self.client = gspread.authorize(credentials)
+                self.logger.info("Google Sheets認證成功（來自環境變數）")
+                return True
+                
+            except Exception as e:
+                self.logger.error(f"從環境變數載入Google憑證失敗: {e}")
+                # 繼續嘗試從檔案載入
+        
+        # 從檔案載入憑證（本地開發）
         if not self.credentials_file.exists():
             self.create_credentials_template()
             return False
@@ -63,7 +93,7 @@ class GoogleSheetsManager:
             
             # 建立gspread客戶端
             self.client = gspread.authorize(credentials)
-            self.logger.info("Google Sheets認證成功")
+            self.logger.info("Google Sheets認證成功（來自檔案）")
             return True
             
         except Exception as e:
