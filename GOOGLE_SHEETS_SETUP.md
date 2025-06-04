@@ -1,38 +1,73 @@
+# Google Sheets 設定指南
 
-# 🌐 Google Sheets 設定指南
-
-## 📋 快速設定步驟
+## 📋 前置作業
 
 ### 1. 建立Google Cloud專案
-1. 前往 https://console.cloud.google.com/
-2. 點擊「建立專案」
-3. 輸入專案名稱：「台期所資料分析」
-4. 點擊「建立」
+1. 前往 [Google Cloud Console](https://console.cloud.google.com/)
+2. 建立新專案或選擇現有專案
+3. 專案名稱建議：`taiwan-futures-crawler`
 
 ### 2. 啟用Google Sheets API
-1. 在專案中搜尋「Google Sheets API」
-2. 點擊「啟用」
-3. 同樣啟用「Google Drive API」
+1. 在Cloud Console中，前往「API和服務」>「程式庫」
+2. 搜尋「Google Sheets API」
+3. 點選並啟用此API
 
 ### 3. 建立服務帳號
-1. 前往「IAM與管理」→「服務帳號」
-2. 點擊「建立服務帳號」
-3. 輸入名稱：「sheets-automation」
-4. 點擊「建立並繼續」
-5. 略過權限設定，直接點擊「完成」
+1. 前往「API和服務」>「憑證」
+2. 點選「建立憑證」>「服務帳號」
+3. 輸入服務帳號名稱：`taifex-crawler-service`
+4. 點選「建立並繼續」
+5. 角色選擇：「編輯者」
+6. 點選「完成」
 
-### 4. 下載認證金鑰
-1. 點擊剛建立的服務帳號
-2. 切換到「金鑰」分頁
-3. 點擊「新增金鑰」→「建立新金鑰」
+### 4. 產生金鑰
+1. 找到剛建立的服務帳號
+2. 點選「動作」>「管理金鑰」
+3. 點選「新增金鑰」>「建立新金鑰」
 4. 選擇「JSON」格式
-5. 下載檔案並重新命名為：`google_sheets_credentials.json`
-6. 將檔案放到 `config/` 目錄下
+5. 下載金鑰檔案
 
-### 5. 測試連接
-```bash
-python google_sheets_manager.py
+## 🔐 設定GitHub Secrets
+
+### 1. 複製JSON內容
+1. 開啟下載的JSON檔案
+2. 複製整個JSON內容
+
+### 2. 設定GitHub Secret
+1. 前往你的GitHub倉庫
+2. 點選「Settings」
+3. 左側選單選擇「Secrets and variables」>「Actions」
+4. 點選「New repository secret」
+5. 名稱：`GOOGLE_SHEETS_CREDENTIALS`
+6. 值：貼上剛複製的JSON內容
+7. 點選「Add secret」
+
+## ✅ 驗證設定
+
+重新執行GitHub Actions，應該會看到：
 ```
+✅ Google Sheets認證已設定（來自GitHub Secret）
+```
+
+如果看到以下訊息則表示未設定：
+```
+⚠️ 未設定GOOGLE_SHEETS_CREDENTIALS Secret，跳過Google Sheets功能
+```
+
+## 📱 首次使用
+
+設定完成後，程式會自動：
+1. 建立新的Google試算表
+2. 設定為公開可檢視
+3. 儲存試算表連結到 `config/spreadsheet_config.json`
+4. 上傳最新資料到試算表
+
+## 🔗 存取試算表
+
+完成後可以在以下位置找到試算表連結：
+- GitHub Actions執行日誌中
+- `config/spreadsheet_config.json` 檔案中
+- 或查看 `execution_summary.txt`
 
 ## 🎯 完成後的優勢
 
