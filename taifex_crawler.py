@@ -638,7 +638,7 @@ class TaifexCrawler:
         
         # 如果未指定文件名，使用當前時間生成
         if not filename:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.datetime.now(TW_TZ).strftime("%Y%m%d_%H%M%S")
             filename = f"taifex_data_{timestamp}"
         
         # 保存為 CSV
@@ -977,7 +977,7 @@ def main():
                                 config = {
                                     'spreadsheet_id': spreadsheet.id,
                                     'spreadsheet_url': sheets_manager.get_spreadsheet_url(),
-                                    'created_at': datetime.now().isoformat()
+                                    'created_at': datetime.datetime.now(TW_TZ).isoformat()
                                 }
                                 
                                 spreadsheet_config_file.parent.mkdir(exist_ok=True)
