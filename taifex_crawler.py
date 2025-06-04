@@ -20,6 +20,7 @@ import logging
 import random
 import json
 from pathlib import Path
+import pytz
 try:
     from database_manager import TaifexDatabaseManager
     from daily_report_generator import DailyReportGenerator
@@ -62,6 +63,8 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("期貨爬蟲")
+
+TW_TZ = pytz.timezone('Asia/Taipei')
 
 class TaifexCrawler:
     def __init__(self, output_dir="output", max_retries=3, delay=0.5, 
@@ -114,7 +117,7 @@ class TaifexCrawler:
         # 簡化日期檢查，只記錄而不阻止爬取
         try:
             target_date = datetime.datetime.strptime(date_str, "%Y/%m/%d")
-            today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today = datetime.datetime.now(TW_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
             
             if target_date > today:
                 logger.info(f"嘗試爬取未來日期 {date_str}，台期所可能尚未公布資料")
@@ -544,7 +547,7 @@ class TaifexCrawler:
             contracts = CONTRACTS
         
         # 調試：記錄系統時間信息
-        today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.datetime.now(TW_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
         logger.info(f"系統時間: {today.strftime('%Y/%m/%d %A')}")
         logger.info(f"開始日期: {start_date.strftime('%Y/%m/%d %A')}")
         logger.info(f"結束日期: {end_date.strftime('%Y/%m/%d %A')}")
@@ -795,7 +798,7 @@ def parse_arguments():
     if args.date_range:
         if args.date_range.lower() == 'today':
             # 今天
-            today = datetime.datetime.now()
+            today = datetime.datetime.now(TW_TZ)
             start_date = today
             end_date = today
         elif ',' in args.date_range:
@@ -827,7 +830,7 @@ def parse_arguments():
         # 使用明確的開始和結束日期
         if not args.start_date:
             # 默認為當年初至今
-            today = datetime.datetime.now()
+            today = datetime.datetime.now(TW_TZ)
             start_date = datetime.datetime(today.year, 1, 1)
             end_date = today
         else:
@@ -836,10 +839,14 @@ def parse_arguments():
             if args.end_date:
                 end_date = datetime.datetime.strptime(args.end_date, "%Y/%m/%d")
             else:
-                end_date = datetime.datetime.now()
+                end_date = datetime.datetime.now(TW_TZ)
+    
+    # 統一時間部分 - 將所有日期設為當天的00:00:00，避免時間比較問題
+    start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
     
     # 確保結束日期不超過今天
-    today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.datetime.now(TW_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     if end_date > today:
         end_date = today
         logger.info(f"結束日期設定為今天: {today.strftime('%Y/%m/%d')}")
@@ -1119,8 +1126,8 @@ def prepare_data_for_db(df):
     
     for _, row in df.iterrows():
         base_record = {
-            'date': row.get('交易日期', ''),
-            'contract_code': row.get('契約', ''),
+            'date': row.get('日期', ''),
+            'contract_code': row.get('契約名稱', ''),
         }
         
         # 處理身份別資料
@@ -1175,8 +1182,8 @@ def prepare_data_for_db(df):
         # 如果沒有識別到標準格式，創建基本記錄
         for _, row in df.iterrows():
             record = {
-                'date': row.get('交易日期', ''),
-                'contract_code': row.get('契約', ''),
+                'date': row.get('日期', ''),
+                'contract_code': row.get('契約名稱', ''),
                 'identity_type': row.get('身份別', '總計'),
                 'position_type': '未分類',
                 'long_position': 0,
