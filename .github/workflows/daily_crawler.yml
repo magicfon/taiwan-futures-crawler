@@ -160,6 +160,11 @@ jobs:
           exit 1
         fi
         
+    - name: 設定Git使用者
+      run: |
+        git config --global user.name 'GitHub Actions Bot'
+        git config --global user.email 'actions@github.com'
+        
     - name: 提交固定資料檔案
       run: |
         # 檢查是否有重要的固定檔案需要提交
@@ -198,11 +203,6 @@ jobs:
         else
           echo "沒有重要檔案需要提交"
         fi
-    
-    - name: 設定Git使用者
-      run: |
-        git config --global user.name 'GitHub Actions Bot'
-        git config --global user.email 'actions@github.com'
         
     - name: 推送更新
       run: |
