@@ -70,6 +70,15 @@ jobs:
           echo "⚠️ 未設定Telegram Secrets，跳過Telegram通知功能"
         fi
         
+    - name: 時間調試檢查
+      run: |
+        echo "🕐 檢查系統時間設定..."
+        python debug_time.py
+        echo ""
+        echo "系統指令檢查:"
+        date
+        echo "UTC時間: $(date -u)"
+        
     - name: 執行爬蟲 (第一次嘗試)
       id: first_attempt
       run: |
