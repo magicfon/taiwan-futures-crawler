@@ -543,22 +543,20 @@ class TaifexCrawler:
         if not contracts:
             contracts = CONTRACTS
         
-        # 寬鬆的日期檢查 - 允許爬取今天和合理的未來日期
+        # 調試：記錄系統時間信息
         today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        max_future_days = 7  # 允許未來7天內的日期
-        max_allowed_date = today + datetime.timedelta(days=max_future_days)
-        
-        if end_date > max_allowed_date:
-            logger.warning(f"結束日期 {end_date.strftime('%Y/%m/%d')} 過於未來，調整為 {max_allowed_date.strftime('%Y/%m/%d')}")
-            end_date = max_allowed_date
-        
-        # 如果開始日期過於未來，給予警告但不阻止
-        if start_date > max_allowed_date:
-            logger.warning(f"開始日期 {start_date.strftime('%Y/%m/%d')} 過於未來，台期所可能尚未公布資料")
+        logger.info(f"系統時間: {today.strftime('%Y/%m/%d %A')}")
+        logger.info(f"開始日期: {start_date.strftime('%Y/%m/%d %A')}")
+        logger.info(f"結束日期: {end_date.strftime('%Y/%m/%d %A')}")
         
         # 計算總任務數量（用於進度條）
         date_range = [start_date + datetime.timedelta(days=x) for x in range((end_date - start_date).days + 1)]
-        # 包含今天和未來幾天的日期（讓台期所決定是否有資料）
+        
+        # 記錄所有日期和其交易日判斷
+        for date in date_range:
+            is_business = self._is_business_day(date)
+            logger.info(f"日期檢查: {date.strftime('%Y/%m/%d %A')} - 交易日: {is_business}")
+        
         business_days = [d for d in date_range if self._is_business_day(d)]
         
         total_tasks = len(business_days) * len(contracts)
@@ -569,6 +567,11 @@ class TaifexCrawler:
         logger.info(f"共 {len(business_days)} 個交易日，{len(contracts)} 個契約類型")
         if identities:
             logger.info(f"包含 {len(identities)} 種身份別資料")
+        
+        # 如果沒有交易日，直接返回空的DataFrame
+        if len(business_days) == 0:
+            logger.warning(f"在指定範圍內沒有找到交易日")
+            return pd.DataFrame()
         
         # 準備任務列表
         tasks = []
@@ -582,6 +585,8 @@ class TaifexCrawler:
             else:
                 for contract in contracts:
                     tasks.append((date_str, contract, None))
+        
+        logger.info(f"準備執行 {len(tasks)} 個爬取任務")
         
         # 使用多線程加速爬取
         all_results = []
@@ -1086,13 +1091,16 @@ def main():
         # 沒有爬取到資料
         logger.warning("⚠️ 沒有爬取到任何有效資料")
         
-        # 檢查是否為假日或非交易日
-        today = datetime.datetime.now()
-        if today.weekday() >= 5:  # 週六日
-            logger.info("今日為週末，可能沒有交易資料")
+        # 檢查爬取的日期範圍是否包含交易日
+        date_range = [args.start_date + datetime.timedelta(days=x) for x in range((args.end_date - args.start_date).days + 1)]
+        business_days_in_range = [d for d in date_range if d.weekday() < 5]  # 週一到週五
+        
+        if len(business_days_in_range) == 0:
+            logger.info("指定的日期範圍內沒有交易日（全為週末），這是正常的")
             return 0  # 週末沒資料是正常的
         else:
-            logger.error("❌ 交易日但沒有資料，可能網站有問題或資料尚未公布")
+            logger.error("❌ 指定日期範圍包含交易日但沒有資料，可能網站有問題或資料尚未公布")
+            logger.info(f"交易日期: {[d.strftime('%Y/%m/%d %A') for d in business_days_in_range]}")
             return 1  # 回傳錯誤退出碼
 
 
