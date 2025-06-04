@@ -2,8 +2,8 @@ name: 每日台期所資料爬取
 
 on:
   schedule:
-    # 每日台北時間 09:00 執行 (UTC 01:00)
-    - cron: '0 1 * * *'
+    # 每日台北時間 15:30 執行 (UTC 07:30)
+    - cron: '30 7 * * *'
   # 允許手動觸發
   workflow_dispatch:
     inputs:
@@ -15,6 +15,10 @@ on:
         description: '契約代碼 (用逗號分隔，如: TX,TE,MTX)'
         required: false
         default: 'TX,TE,MTX,ZMX,NQF'
+      retry_if_empty:
+        description: '如果沒有資料是否重試'
+        required: false
+        default: 'true'
 
 jobs:
   crawl-data:
@@ -38,9 +42,22 @@ jobs:
       run: |
         mkdir -p output
         mkdir -p logs
+        mkdir -p charts
         
-    - name: 執行爬蟲
+    - name: 設定Google Sheets認證
+      if: ${{ env.GOOGLE_SHEETS_CREDENTIALS != '' }}
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: |
+        mkdir -p config
+        echo "$GOOGLE_SHEETS_CREDENTIALS" > config/google_sheets_credentials.json
+        echo "Google Sheets認證已設定"
+        
+    - name: 執行爬蟲 (第一次嘗試)
+      id: first_attempt
+      run: |
+        echo "🚀 開始第一次爬取嘗試..."
+        
         if [ "${{ github.event.inputs.date_range }}" = "today" ] || [ -z "${{ github.event.inputs.date_range }}" ]; then
           # 執行今日資料爬取
           python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
@@ -49,24 +66,81 @@ jobs:
           python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
         fi
         
-    - name: 檢查輸出文件
+        # 檢查是否有產生輸出檔案
+        if [ "$(ls -A output/ 2>/dev/null)" ]; then
+          echo "✅ 第一次爬取成功，有產生資料檔案"
+          echo "success=true" >> $GITHUB_OUTPUT
+        else
+          echo "⚠️ 第一次爬取沒有產生資料檔案"
+          echo "success=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: 等待重試 (如果第一次失敗)
+      if: steps.first_attempt.outputs.success == 'false' && (github.event.inputs.retry_if_empty == 'true' || github.event_name == 'schedule')
       run: |
+        echo "😴 等待10分鐘後重試..."
+        sleep 600  # 等待10分鐘 (600秒)
+        
+    - name: 執行爬蟲 (重試)
+      id: retry_attempt
+      if: steps.first_attempt.outputs.success == 'false' && (github.event.inputs.retry_if_empty == 'true' || github.event_name == 'schedule')
+      run: |
+        echo "🔄 開始重試爬取..."
+        
+        if [ "${{ github.event.inputs.date_range }}" = "today" ] || [ -z "${{ github.event.inputs.date_range }}" ]; then
+          # 執行今日資料爬取
+          python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+        else
+          # 執行指定日期範圍爬取
+          python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+        fi
+        
+        # 檢查是否有產生輸出檔案
+        if [ "$(ls -A output/ 2>/dev/null)" ]; then
+          echo "✅ 重試爬取成功，有產生資料檔案"
+          echo "success=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ 重試後仍然沒有資料檔案"
+          echo "success=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: 檢查最終結果
+      run: |
+        FIRST_SUCCESS="${{ steps.first_attempt.outputs.success }}"
+        RETRY_SUCCESS="${{ steps.retry_attempt.outputs.success }}"
+        
+        echo "=== 爬取結果摘要 ==="
+        echo "第一次嘗試: $FIRST_SUCCESS"
+        if [ "$FIRST_SUCCESS" = "false" ]; then
+          echo "重試結果: $RETRY_SUCCESS"
+        fi
+        
+        echo ""
         echo "=== 輸出目錄內容 ==="
-        ls -la output/
+        ls -la output/ || echo "輸出目錄為空"
+        
         echo ""
         echo "=== 資料庫檔案 ==="
         if [ -d "data" ]; then
           ls -la data/
         fi
+        
         echo ""
         echo "=== 報告檔案 ==="
         if [ -d "reports" ]; then
           ls -la reports/
         fi
+        
         echo ""
         echo "=== 日誌內容 (最後50行) ==="
         if [ -f taifex_crawler.log ]; then
           tail -50 taifex_crawler.log
+        fi
+        
+        # 設定失敗狀態 (如果兩次都失敗)
+        if [ "$FIRST_SUCCESS" = "false" ] && [ "$RETRY_SUCCESS" = "false" ]; then
+          echo "❌ 兩次爬取都失敗，請檢查台期所網站狀態"
+          exit 1
         fi
         
     - name: 提交固定資料檔案

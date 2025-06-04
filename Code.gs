@@ -9,8 +9,8 @@ const DAILY_FETCH_TIME = 15.5; // 每天 15:30 (3:30 PM)
 const ALL_CONTRACTS_SHEET_NAME = '所有期貨資料'; // 新增：統一工作表名稱
 
 // 新增：Telegram Bot設定（請填入您的Bot Token和Chat ID）
-const TELEGRAM_BOT_TOKEN = ''; // 請填入您的Telegram Bot Token
-const TELEGRAM_CHAT_ID = ''; // 請填入您的Chat ID
+const TELEGRAM_BOT_TOKEN = '7088578241:AAErbP-EuoRGClRZ3FFfPMjl8k3CFpqgn8E'; // 請填入您的Telegram Bot Token
+const TELEGRAM_CHAT_ID = '1038401606'; // 請填入您的Chat ID
 
 // 新增：失敗重試設定
 const MAX_RETRY_ATTEMPTS = 3; // 最大重試次數

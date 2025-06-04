@@ -75,8 +75,8 @@ class TaifexDatabaseManager:
         conn = sqlite3.connect(self.db_path)
         
         try:
-            # 使用replace into 來處理重複資料
-            df.to_sql('futures_data', conn, if_exists='append', index=False, method='replace')
+            # 使用append模式插入資料，重複資料由資料庫唯一約束處理
+            df.to_sql('futures_data', conn, if_exists='append', index=False)
             
             # 更新日報摘要
             self.update_daily_summary(df)
@@ -107,8 +107,8 @@ class TaifexDatabaseManager:
             
             cursor.execute('''
                 INSERT OR REPLACE INTO daily_summary 
-                (date, total_contracts, total_volume, foreign_net, dealer_net, trust_net, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                (date, total_contracts, total_volume, foreign_net, dealer_net, trust_net)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', (
                 date,
                 len(day_data['contract_code'].unique()),

@@ -1,0 +1,25 @@
+{
+  "google_drive": {
+    "enabled": false,
+    "folder_path": "台期所分析資料",
+    "sync_files": [
+      "output/台期所最新30天資料.xlsx",
+      "reports/台期所30日報告_*.xlsx",
+      "reports/台期所30日報告_*.md"
+    ]
+  },
+  "onedrive": {
+    "enabled": false,
+    "folder_path": "台期所分析資料",
+    "sync_files": [
+      "output/台期所最新30天資料.xlsx",
+      "reports/台期所30日報告_*.xlsx"
+    ]
+  },
+  "dropbox": {
+    "enabled": false,
+    "folder_path": "台期所分析資料"
+  },
+  "auto_sync": true,
+  "sync_frequency": "daily"
+}

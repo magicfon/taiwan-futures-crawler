@@ -23,10 +23,19 @@ from pathlib import Path
 try:
     from database_manager import TaifexDatabaseManager
     from daily_report_generator import DailyReportGenerator
+    from google_sheets_manager import GoogleSheetsManager
+    from telegram_notifier import TelegramNotifier
+    from chart_generator import ChartGenerator
     DB_AVAILABLE = True
+    SHEETS_AVAILABLE = True
+    TELEGRAM_AVAILABLE = True
+    CHART_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
-    print("警告: 資料庫模組未找到，將使用傳統檔案存儲方式")
+    SHEETS_AVAILABLE = False
+    TELEGRAM_AVAILABLE = False
+    CHART_AVAILABLE = False
+    print("警告: 資料庫或Google Sheets模組未找到，將使用傳統檔案存儲方式")
 
 # 設定基本參數
 BASE_URL = 'https://www.taifex.com.tw/cht/3/futContractsDate'
@@ -229,154 +238,91 @@ class TaifexCrawler:
             
             # 選擇最大的表格
             main_table = max(tables, key=lambda t: len(str(t)))
+            rows = main_table.find_all('tr')
             
-            # 尋找契約所在行
-            target_row = None
-            highest_score = 0
+            results = []
+            current_contract = None
             
-            # 契約模式匹配字典
-            contract_patterns = {
-                'TX': ['臺指期', '台指期', '臺股期', '台股期'],
-                'TE': ['電子期'],
-                'MTX': ['小型臺指', '小型台指', '小臺指', '小台指'],
-                'ZMX': ['微型臺指', '微型台指', '微臺指', '微台指'],
-                'NQF': ['那斯達克', 'Nasdaq', '美國那斯達克'],
+            # 契約名稱對應
+            contract_mapping = {
+                'TX': '臺股期貨',
+                'TE': '電子期貨', 
+                'MTX': '小型臺指',
+                'ZMX': '微型臺指',
+                'NQF': '那斯達克'
             }
             
-            for row in main_table.find_all('tr'):
+            target_contract_name = contract_mapping.get(contract, contract)
+            
+            for i, row in enumerate(rows):
                 cells = row.find_all(['td', 'th'])
-                if not cells:
+                if len(cells) < 3:
                     continue
+                    
+                # 取得所有單元格文字
+                cell_texts = [cell.get_text(strip=True) for cell in cells]
                 
-                row_text = ' '.join([cell.get_text(strip=True) for cell in cells])
-                score = 0
-                
-                # 精確匹配契約代碼
-                if contract in row_text:
-                    score += 10
-                if CONTRACT_NAMES.get(contract, '') in row_text:
-                    score += 10
-                
-                # 針對特定契約的模糊匹配
-                if contract in contract_patterns:
-                    for pattern in contract_patterns[contract]:
-                        if pattern in row_text:
-                            score += 8
-                            break
-                
-                # 避免交叉匹配到錯誤的契約
-                for c, patterns in contract_patterns.items():
-                    if c != contract:  # 不是目標契約
-                        for pattern in patterns:
-                            if pattern in row_text:
-                                score -= 10  # 懲罰非目標契約匹配
+                # 檢查是否是目標契約的起始行
+                if len(cell_texts) >= 3 and target_contract_name in cell_texts[1]:
+                    current_contract = target_contract_name
+                    logger.debug(f"找到契約: {current_contract}")
+                    
+                    # 解析這行資料 (第一個身份別，通常是自營商)
+                    if len(cell_texts) >= 8:
+                        identity = cell_texts[2]  # 身份別
+                        data = self._build_data_dict(date_str, contract, identity, cell_texts, 3)
+                        if data:
+                            results.append(data)
+                            
+                # 檢查是否是同契約的其他身份別行 (投信、外資)
+                elif current_contract and len(cell_texts) >= 8:
+                    # 如果第一列不是數字（序號），可能是身份別資料
+                    if not cell_texts[0].isdigit() and cell_texts[0] in ['投信', '外資', '投顧']:
+                        identity = cell_texts[0]  # 身份別
+                        data = self._build_data_dict(date_str, contract, identity, cell_texts, 1)
+                        if data:
+                            results.append(data)
+                    
+                    # 如果遇到下一個契約，重置current_contract
+                    elif cell_texts[0].isdigit() and len(cell_texts) > 1:
+                        for contract_name in contract_mapping.values():
+                            if contract_name in cell_texts[1]:
+                                current_contract = None  # 重置，表示已經到下一個契約
                                 break
-                
-                # 檢查是否包含數字（交易數據）
-                if re.search(r'\d', row_text):
-                    score += 2
-                
-                # 記錄高分匹配，幫助調試
-                if score >= 10:
-                    logger.debug(f"契約 {contract} 匹配行分數: {score}, 行文本: {row_text[:30]}...")
-                
-                if score > highest_score:
-                    highest_score = score
-                    target_row = row
             
-            if not target_row or highest_score < 10:
-                return None
+            # 如果找到多筆資料，返回第一筆作為代表（或可以合併）
+            if results:
+                return results[0]  # 返回自營商的資料作為代表
             
-            # 解析行中的資料
-            cells = target_row.find_all('td')
-            if len(cells) < 6:
-                return None
+            return None
             
-            # 獲取所有單元格文本
-            cell_texts = [cell.get_text(strip=True) for cell in cells]
-            
-            # 檢測表格格式
-            has_identity = False
-            identity = ''
-            
-            # 檢查是否為新格式表格（包含身份別）
-            for i, text in enumerate(cell_texts):
-                if i < 3 and text in IDENTITIES:
-                    has_identity = True
-                    identity = text
-                    break
-            
-            # 嘗試使用表頭查找欄位位置
-            column_indices = self._find_column_indices(main_table)
-            
-            # 指定預設欄位位置
-            indices = {
-                '多方交易口數': 3,
-                '多方契約金額': 4,
-                '空方交易口數': 5,
-                '空方契約金額': 6,
-                '多空淨額交易口數': 7,
-                '多空淨額契約金額': 8,
-                '多方未平倉口數': 9,
-                '多方未平倉契約金額': 10,
-                '空方未平倉口數': 11,
-                '空方未平倉契約金額': 12,
-                '多空淨額未平倉口數': 13,
-                '多空淨額未平倉契約金額': 14
-            }
-            
-            # 如果找到表頭定義的欄位，則使用
-            if column_indices:
-                indices.update(column_indices)
-            else:
-                # 根據表格結構調整預設欄位位置
-                if len(cell_texts) < 14:
-                    # 精簡格式表格 (只有口數資料)
-                    indices = {
-                        '多方交易口數': 2,
-                        '多方契約金額': -1,
-                        '空方交易口數': 3,
-                        '空方契約金額': -1,
-                        '多空淨額交易口數': 4,
-                        '多空淨額契約金額': -1,
-                        '多方未平倉口數': 5,
-                        '多方未平倉契約金額': -1,
-                        '空方未平倉口數': 6,
-                        '空方未平倉契約金額': -1,
-                        '多空淨額未平倉口數': 7,
-                        '多空淨額未平倉契約金額': -1
-                    }
-            
-            # 安全獲取數值
-            def safe_get(field):
-                idx = indices.get(field, -1)
-                if 0 <= idx < len(cell_texts):
-                    return self._parse_number(cell_texts[idx])
-                return 0
-            
-            # 構建資料字典
+        except Exception as e:
+            logger.error(f"解析 {date_str} {contract} 資料時發生錯誤: {str(e)}")
+            return None
+    
+    def _build_data_dict(self, date_str, contract, identity, cell_texts, start_idx):
+        """構建資料字典"""
+        try:
             data = {
                 '日期': date_str,
                 '契約名稱': contract,
                 '身份別': identity,
-                '多方交易口數': safe_get('多方交易口數'),
-                '多方契約金額': safe_get('多方契約金額'),
-                '空方交易口數': safe_get('空方交易口數'),
-                '空方契約金額': safe_get('空方契約金額'),
-                '多空淨額交易口數': safe_get('多空淨額交易口數'),
-                '多空淨額契約金額': safe_get('多空淨額契約金額'),
-                '多方未平倉口數': safe_get('多方未平倉口數'),
-                '多方未平倉契約金額': safe_get('多方未平倉契約金額'),
-                '空方未平倉口數': safe_get('空方未平倉口數'),
-                '空方未平倉契約金額': safe_get('空方未平倉契約金額'),
-                '多空淨額未平倉口數': safe_get('多空淨額未平倉口數'),
-                '多空淨額未平倉契約金額': safe_get('多空淨額未平倉契約金額')
+                '多方交易口數': self._parse_number(cell_texts[start_idx]) if len(cell_texts) > start_idx else 0,
+                '多方契約金額': self._parse_number(cell_texts[start_idx+1]) if len(cell_texts) > start_idx+1 else 0,
+                '空方交易口數': self._parse_number(cell_texts[start_idx+2]) if len(cell_texts) > start_idx+2 else 0,
+                '空方契約金額': self._parse_number(cell_texts[start_idx+3]) if len(cell_texts) > start_idx+3 else 0,
+                '多空淨額交易口數': self._parse_number(cell_texts[start_idx+4]) if len(cell_texts) > start_idx+4 else 0,
+                '多空淨額契約金額': self._parse_number(cell_texts[start_idx+5]) if len(cell_texts) > start_idx+5 else 0,
+                '多方未平倉口數': self._parse_number(cell_texts[start_idx+6]) if len(cell_texts) > start_idx+6 else 0,
+                '多方未平倉契約金額': self._parse_number(cell_texts[start_idx+7]) if len(cell_texts) > start_idx+7 else 0,
+                '空方未平倉口數': self._parse_number(cell_texts[start_idx+8]) if len(cell_texts) > start_idx+8 else 0,
+                '空方未平倉契約金額': self._parse_number(cell_texts[start_idx+9]) if len(cell_texts) > start_idx+9 else 0,
+                '多空淨額未平倉口數': self._parse_number(cell_texts[start_idx+10]) if len(cell_texts) > start_idx+10 else 0,
+                '多空淨額未平倉契約金額': self._parse_number(cell_texts[start_idx+11]) if len(cell_texts) > start_idx+11 else 0
             }
-            
             return data
-            
         except Exception as e:
-            logger.error(f"解析 {date_str} {contract} 資料時發生錯誤: {str(e)}")
+            logger.error(f"構建資料字典時發生錯誤: {str(e)}")
             return None
     
     def _parse_identity_data(self, html_content, contract, date_str, identity):
@@ -797,6 +743,11 @@ class TaifexCrawler:
         
         return result
 
+    def save_complete_report(self, report_data, date_range_str, contracts):
+        """儲存完整報告"""
+        # 實現儲存完整報告的邏輯
+        pass
+
 
 def parse_arguments():
     """解析命令行參數"""
@@ -929,6 +880,17 @@ def main():
         db_manager = None
         report_generator = None
     
+    # 初始化Google Sheets管理器
+    if SHEETS_AVAILABLE:
+        sheets_manager = GoogleSheetsManager()
+        if sheets_manager.client:
+            logger.info("Google Sheets系統已啟用")
+        else:
+            logger.warning("Google Sheets認證未完成，跳過雲端上傳")
+            sheets_manager = None
+    else:
+        sheets_manager = None
+    
     # 創建爬蟲實例
     crawler = TaifexCrawler(
         output_dir=args.output_dir,
@@ -980,13 +942,157 @@ def main():
                 db_manager.export_to_excel(latest_30d_path, days=30)
                 logger.info(f"最新30天資料已匯出: {latest_30d_path}")
                 
+                # 3. 上傳到Google Sheets（如果可用）
+                if sheets_manager:
+                    try:
+                        # 連接或建立試算表
+                        spreadsheet_config_file = Path("config/spreadsheet_config.json")
+                        
+                        if spreadsheet_config_file.exists():
+                            # 載入現有試算表配置
+                            with open(spreadsheet_config_file, 'r', encoding='utf-8') as f:
+                                config = json.load(f)
+                                spreadsheet_id = config.get('spreadsheet_id')
+                                
+                                if spreadsheet_id:
+                                    sheets_manager.connect_spreadsheet(spreadsheet_id)
+                                    logger.info("已連接到現有的Google試算表")
+                        
+                        if not sheets_manager.spreadsheet:
+                            # 建立新試算表
+                            spreadsheet = sheets_manager.create_spreadsheet("台期所資料分析")
+                            if spreadsheet:
+                                # 儲存試算表配置
+                                config = {
+                                    'spreadsheet_id': spreadsheet.id,
+                                    'spreadsheet_url': sheets_manager.get_spreadsheet_url(),
+                                    'created_at': datetime.now().isoformat()
+                                }
+                                
+                                spreadsheet_config_file.parent.mkdir(exist_ok=True)
+                                with open(spreadsheet_config_file, 'w', encoding='utf-8') as f:
+                                    json.dump(config, f, indent=2, ensure_ascii=False)
+                                
+                                # 設定為公開可檢視
+                                sheets_manager.share_spreadsheet()
+                                
+                                logger.info(f"🎉 Google試算表已建立: {sheets_manager.get_spreadsheet_url()}")
+                                logger.info("📱 現在可以在任何裝置上存取台期所資料了！")
+                        
+                        if sheets_manager.spreadsheet:
+                            # 上傳資料到Google Sheets
+                            recent_data = db_manager.get_recent_data(30)
+                            summary_data = db_manager.get_daily_summary(30)
+                            
+                            # 上傳主要資料
+                            if not recent_data.empty:
+                                sheets_manager.upload_data(recent_data)
+                                logger.info("✅ 資料已上傳到Google Sheets")
+                            
+                            # 上傳摘要資料
+                            if not summary_data.empty:
+                                sheets_manager.upload_summary(summary_data)
+                                sheets_manager.update_trend_analysis(summary_data)
+                                logger.info("✅ 摘要和趨勢分析已更新")
+                            
+                            # 更新系統資訊
+                            sheets_manager.update_system_info()
+                            
+                            logger.info(f"🌐 Google試算表網址: {sheets_manager.get_spreadsheet_url()}")
+                            logger.info("💡 提示: 將此網址加入書籤，隨時查看最新資料")
+                    
+                    except Exception as e:
+                        logger.error(f"Google Sheets上傳失敗: {e}")
+                        logger.info("本地資料已正常保存，可稍後手動上傳")
+                
+                # 4. 生成圖表並發送到Telegram（如果可用）
+                if CHART_AVAILABLE and TELEGRAM_AVAILABLE:
+                    try:
+                        logger.info("🎨 開始生成圖表...")
+                        
+                        # 初始化圖表生成器
+                        chart_generator = ChartGenerator(output_dir="charts")
+                        
+                        # 優先從Google Sheets獲取30天歷史資料
+                        chart_data = None
+                        if sheets_manager and sheets_manager.spreadsheet:
+                            logger.info("📊 從Google Sheets載入歷史資料...")
+                            chart_data = chart_generator.load_data_from_google_sheets(30)
+                        
+                        # 如果Google Sheets沒有資料，則從資料庫獲取
+                        if chart_data is None or chart_data.empty:
+                            if db_manager:
+                                logger.info("📊 從資料庫載入歷史資料...")
+                                chart_data = db_manager.get_recent_data(30)
+                            else:
+                                # 最後嘗試從當前爬取的資料
+                                chart_data = df
+                        
+                        if not chart_data.empty:
+                            logger.info(f"📊 使用 {len(chart_data)} 筆資料生成圖表")
+                            
+                            # 生成所有圖表
+                            chart_paths = chart_generator.generate_all_charts(chart_data)
+                            
+                            if chart_paths:
+                                logger.info(f"📊 已生成 {len(chart_paths)} 個圖表")
+                                
+                                # 生成摘要文字
+                                summary_text = chart_generator.generate_summary_text(chart_data)
+                                
+                                # 初始化Telegram通知器
+                                telegram_bot_token = "7088578241:AAErbP-EuoRGClRZ3FFfPMjl8k3CFpqgn8E"
+                                telegram_chat_id = "1038401606"
+                                notifier = TelegramNotifier(telegram_bot_token, telegram_chat_id)
+                                
+                                # 測試連線
+                                if notifier.test_connection():
+                                    # 發送圖表報告
+                                    success = notifier.send_chart_report(chart_paths, summary_text)
+                                    
+                                    if success:
+                                        logger.info("📱 圖表已成功發送到Telegram")
+                                    else:
+                                        logger.warning("⚠️ Telegram發送部分失敗")
+                                else:
+                                    logger.error("❌ Telegram連線失敗，無法發送圖表")
+                            else:
+                                logger.warning("⚠️ 沒有生成任何圖表")
+                        else:
+                            logger.info("📊 沒有找到足夠的歷史資料生成圖表")
+                    
+                    except Exception as e:
+                        logger.error(f"圖表生成或Telegram發送失敗: {e}")
+                        logger.info("資料已正常保存，圖表功能將跳過")
+                
+                elif not CHART_AVAILABLE:
+                    logger.info("📊 圖表生成模組未啟用，請安裝 matplotlib")
+                elif not TELEGRAM_AVAILABLE:
+                    logger.info("📱 Telegram通知模組未啟用")
+                elif not db_manager:
+                    logger.info("🗄️ 資料庫未啟用，無法生成30天圖表")
+                
             except Exception as e:
                 logger.error(f"資料庫操作失敗: {e}")
         
+        # 儲存完整報告
+        # 移除未定義的report_data
+        
+        logger.info("程式執行完成")
+        return 0  # 成功退出
+        
     else:
-        logger.warning("未爬取到任何資料")
-    
-    logger.info("程式執行完成")
+        # 沒有爬取到資料
+        logger.warning("⚠️ 沒有爬取到任何有效資料")
+        
+        # 檢查是否為假日或非交易日
+        today = datetime.datetime.now()
+        if today.weekday() >= 5:  # 週六日
+            logger.info("今日為週末，可能沒有交易資料")
+            return 0  # 週末沒資料是正常的
+        else:
+            logger.error("❌ 交易日但沒有資料，可能網站有問題或資料尚未公布")
+            return 1  # 回傳錯誤退出碼
 
 
 def prepare_data_for_db(df):
@@ -1074,4 +1180,6 @@ def prepare_data_for_db(df):
 
 
 if __name__ == "__main__":
-    main() 
+    import sys
+    exit_code = main()
+    sys.exit(exit_code) 

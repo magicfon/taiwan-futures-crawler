@@ -44,4 +44,28 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-.tmp/ 
+.tmp/
+
+# 敏感配置文件
+config/google_sheets_credentials.json
+config/telegram_config.json
+*.key
+*.pem
+*.p12
+.env
+.env.local
+
+# 資料庫文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 大型輸出文件
+output/*.csv
+output/*.xlsx
+output_history/
+reports/
+charts/*.png
+charts/*.jpg
+real_charts/
+updated_charts_with_june3/ 
