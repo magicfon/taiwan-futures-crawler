@@ -59,6 +59,9 @@ config/telegram_config.json
 *.db
 *.sqlite
 *.sqlite3
+# 但允許GitHub Actions產生的資料摘要
+!latest_30days_data.xlsx
+!execution_summary.txt
 
 # 大型輸出文件
 output/*.csv

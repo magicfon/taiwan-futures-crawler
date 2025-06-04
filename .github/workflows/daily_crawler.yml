@@ -177,38 +177,46 @@ jobs:
     - name: 提交固定資料檔案
       run: |
         # 檢查是否有重要的固定檔案需要提交
-        IMPORTANT_FILES=(
-          "output/台期所最新30天資料.xlsx"
-          "data/taifex_data.db"
-        )
+        # 注意：某些檔案可能被.gitignore忽略，需要特別處理
         
         HAS_CHANGES=false
         
-        # 檢查每個重要檔案
-        for file in "${IMPORTANT_FILES[@]}"; do
-          if [ -f "$file" ]; then
-            git add "$file"
-            echo "已添加: $file"
-            HAS_CHANGES=true
-          fi
-        done
+        # 檢查特定的重要檔案（這些檔案我們想要在GitHub Actions中保留）
+        # 但需要考慮.gitignore的設定
         
-        # 添加報告檔案
-        if [ -d "reports" ]; then
-          git add reports/
-          echo "已添加報告目錄"
+        # 1. 檢查最新30天資料檔案
+        if [ -f "output/台期所最新30天資料.xlsx" ]; then
+          # 由於output/*.xlsx被忽略，我們創建一個特殊的檔案名
+          cp "output/台期所最新30天資料.xlsx" "latest_30days_data.xlsx"
+          git add "latest_30days_data.xlsx"
+          echo "已添加: latest_30days_data.xlsx (來自output/台期所最新30天資料.xlsx)"
           HAS_CHANGES=true
         fi
         
-        # 添加日誌
+        # 2. 檢查日誌檔案 (通常被忽略，但我們可以創建摘要)
         if [ -f taifex_crawler.log ]; then
-          git add taifex_crawler.log
+          # 創建日誌摘要而不是整個日誌檔案
+          echo "=== 最後執行摘要 ===" > execution_summary.txt
+          echo "執行時間: $(date)" >> execution_summary.txt
+          echo "執行結果: ${{ steps.first_attempt.outputs.success }}" >> execution_summary.txt
+          echo "" >> execution_summary.txt
+          echo "=== 日誌最後20行 ===" >> execution_summary.txt
+          tail -20 taifex_crawler.log >> execution_summary.txt
+          git add execution_summary.txt
+          echo "已添加: execution_summary.txt"
+          HAS_CHANGES=true
+        fi
+        
+        # 3. 其他不被忽略的重要檔案
+        if [ -f "config/spreadsheet_config.json" ]; then
+          git add "config/spreadsheet_config.json"
+          echo "已添加: config/spreadsheet_config.json"
           HAS_CHANGES=true
         fi
         
         # 提交變更
         if [ "$HAS_CHANGES" = true ]; then
-          git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料和分析報告" || echo "沒有需要提交的變更"
+          git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料和執行摘要" || echo "沒有需要提交的變更"
         else
           echo "沒有重要檔案需要提交"
         fi
