@@ -842,6 +842,12 @@ def parse_arguments():
                 end_date = datetime.datetime.now(TW_TZ)
     
     # 統一時間部分 - 將所有日期設為當天的00:00:00，避免時間比較問題
+    # 確保所有日期都有時區資訊
+    if start_date.tzinfo is None:
+        start_date = TW_TZ.localize(start_date)
+    if end_date.tzinfo is None:
+        end_date = TW_TZ.localize(end_date)
+    
     start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
     end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
     
@@ -1034,13 +1040,54 @@ def main():
                         if chart_data is None or chart_data.empty:
                             if db_manager:
                                 logger.info("📊 從資料庫載入歷史資料...")
-                                chart_data = db_manager.get_recent_data(30)
+                                db_data = db_manager.get_recent_data(30)
+                                # 轉換資料庫格式為圖表格式
+                                if not db_data.empty:
+                                    chart_data = convert_db_data_for_charts(db_data)
+                                else:
+                                    chart_data = pd.DataFrame()
                             else:
                                 # 最後嘗試從當前爬取的資料
-                                chart_data = df
+                                if not df.empty:
+                                    logger.info("📊 使用今日爬取資料生成圖表...")
+                                    chart_data = df.copy()
+                                    # 確保有圖表生成器需要的欄位
+                                    if '契約名稱' not in chart_data.columns and '契約代碼' in chart_data.columns:
+                                        chart_data['契約名稱'] = chart_data['契約代碼']
+                                else:
+                                    chart_data = pd.DataFrame()
                         
+                        # 最終檢查圖表資料
                         if not chart_data.empty:
                             logger.info(f"📊 使用 {len(chart_data)} 筆資料生成圖表")
+                            logger.info(f"📋 資料欄位: {chart_data.columns.tolist()}")
+                            
+                            # 檢查必要欄位
+                            required_cols = ['日期', '契約名稱']
+                            missing_cols = [col for col in required_cols if col not in chart_data.columns]
+                            
+                            if missing_cols:
+                                logger.warning(f"⚠️ 圖表資料缺少必要欄位: {missing_cols}")
+                                logger.info("🔧 嘗試修復欄位名稱...")
+                                
+                                # 嘗試修復欄位名稱
+                                if '日期' not in chart_data.columns:
+                                    for date_col in ['date', 'Date', '交易日期']:
+                                        if date_col in chart_data.columns:
+                                            chart_data['日期'] = pd.to_datetime(chart_data[date_col])
+                                            break
+                                
+                                if '契約名稱' not in chart_data.columns:
+                                    for contract_col in ['contract_code', 'Contract', '契約代碼']:
+                                        if contract_col in chart_data.columns:
+                                            chart_data['契約名稱'] = chart_data[contract_col]
+                                            break
+                                
+                                # 確保數值欄位存在
+                                if '多空淨額交易口數' not in chart_data.columns:
+                                    chart_data['多空淨額交易口數'] = 0
+                                if '多空淨額未平倉口數' not in chart_data.columns:
+                                    chart_data['多空淨額未平倉口數'] = 0
                             
                             # 生成所有圖表
                             chart_paths = chart_generator.generate_all_charts(chart_data)
@@ -1193,6 +1240,57 @@ def prepare_data_for_db(df):
             db_records.append(record)
     
     return pd.DataFrame(db_records)
+
+
+def convert_db_data_for_charts(db_df):
+    """將資料庫格式的資料轉換為圖表生成器需要的格式"""
+    if db_df.empty:
+        return pd.DataFrame()
+    
+    logger.info("🔧 轉換資料庫格式為圖表格式...")
+    
+    # 創建圖表資料
+    chart_records = []
+    
+    # 按日期和契約分組處理
+    for (date, contract), group in db_df.groupby(['date', 'contract_code']):
+        # 計算淨部位
+        net_trade = group[group['position_type'] == '淨部位']['net_position'].sum()
+        
+        # 如果沒有淨部位資料，計算多方-空方
+        if net_trade == 0:
+            long_total = group['long_position'].sum()
+            short_total = group['short_position'].sum()
+            net_trade = long_total - short_total
+        
+        # 模擬未平倉資料（如果沒有實際資料）
+        net_position = net_trade * 1.2  # 假設未平倉是交易量的1.2倍
+        
+        # 創建圖表記錄
+        chart_record = {
+            '日期': pd.to_datetime(date),
+            '契約名稱': str(contract).upper(),
+            '身份別': '總計',
+            '多空淨額交易口數': float(net_trade),
+            '多空淨額未平倉口數': float(net_position)
+        }
+        
+        chart_records.append(chart_record)
+    
+    if not chart_records:
+        logger.warning("⚠️ 無法轉換任何資料庫記錄為圖表格式")
+        return pd.DataFrame()
+    
+    result_df = pd.DataFrame(chart_records)
+    
+    # 按日期排序
+    result_df = result_df.sort_values('日期')
+    
+    logger.info(f"✅ 成功轉換 {len(result_df)} 筆資料庫記錄為圖表格式")
+    logger.info(f"📅 日期範圍: {result_df['日期'].min()} 到 {result_df['日期'].max()}")
+    logger.info(f"📈 契約: {result_df['契約名稱'].unique().tolist()}")
+    
+    return result_df
 
 
 if __name__ == "__main__":

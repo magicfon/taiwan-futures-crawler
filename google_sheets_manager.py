@@ -350,13 +350,14 @@ class GoogleSheetsManager:
             # 準備摘要資料
             data_to_upload = []
             for _, row in summary_df.iterrows():
+                # 確保所有資料都轉換為字串或數字，避免 bytes 類型
                 data_row = [
-                    row.get('date', ''),
-                    row.get('total_contracts', 0),
-                    row.get('total_volume', 0),
-                    row.get('foreign_net', 0),
-                    row.get('dealer_net', 0),
-                    row.get('trust_net', 0),
+                    str(row.get('date', '')),
+                    int(row.get('total_contracts', 0)) if pd.notna(row.get('total_contracts', 0)) else 0,
+                    int(row.get('total_volume', 0)) if pd.notna(row.get('total_volume', 0)) else 0,
+                    int(row.get('foreign_net', 0)) if pd.notna(row.get('foreign_net', 0)) else 0,
+                    int(row.get('dealer_net', 0)) if pd.notna(row.get('dealer_net', 0)) else 0,
+                    int(row.get('trust_net', 0)) if pd.notna(row.get('trust_net', 0)) else 0,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 ]
                 data_to_upload.append(data_row)
@@ -380,11 +381,29 @@ class GoogleSheetsManager:
         try:
             worksheet = self.spreadsheet.worksheet("三大法人趨勢")
             
-            # 計算移動平均
+            # 檢查並轉換數值欄位
+            numeric_columns = ['foreign_net', 'dealer_net', 'trust_net']
+            for col in numeric_columns:
+                if col in summary_df.columns:
+                    summary_df[col] = pd.to_numeric(summary_df[col], errors='coerce').fillna(0)
+            
+            # 排序並檢查是否有足夠資料
             summary_df = summary_df.sort_values('date')
-            summary_df['外資7日平均'] = summary_df['foreign_net'].rolling(7, min_periods=1).mean().round(2)
-            summary_df['自營商7日平均'] = summary_df['dealer_net'].rolling(7, min_periods=1).mean().round(2)
-            summary_df['投信7日平均'] = summary_df['trust_net'].rolling(7, min_periods=1).mean().round(2)
+            
+            if len(summary_df) == 0:
+                self.logger.warning("沒有有效的摘要資料用於趨勢分析")
+                return False
+            
+            # 計算移動平均（至少需要1筆資料）
+            if len(summary_df) >= 1:
+                summary_df['外資7日平均'] = summary_df['foreign_net'].rolling(7, min_periods=1).mean().round(2)
+                summary_df['自營商7日平均'] = summary_df['dealer_net'].rolling(7, min_periods=1).mean().round(2)
+                summary_df['投信7日平均'] = summary_df['trust_net'].rolling(7, min_periods=1).mean().round(2)
+            else:
+                # 如果沒有足夠資料，設為0
+                summary_df['外資7日平均'] = 0
+                summary_df['自營商7日平均'] = 0  
+                summary_df['投信7日平均'] = 0
             
             # 清除舊資料
             worksheet.batch_clear(["A2:Z1000"])
@@ -393,13 +412,13 @@ class GoogleSheetsManager:
             data_to_upload = []
             for _, row in summary_df.iterrows():
                 data_row = [
-                    row.get('date', ''),
-                    row.get('foreign_net', 0),
-                    row.get('dealer_net', 0),
-                    row.get('trust_net', 0),
-                    row.get('外資7日平均', 0),
-                    row.get('自營商7日平均', 0),
-                    row.get('投信7日平均', 0)
+                    str(row.get('date', '')),
+                    int(row.get('foreign_net', 0)) if pd.notna(row.get('foreign_net', 0)) else 0,
+                    int(row.get('dealer_net', 0)) if pd.notna(row.get('dealer_net', 0)) else 0,
+                    int(row.get('trust_net', 0)) if pd.notna(row.get('trust_net', 0)) else 0,
+                    round(float(row.get('外資7日平均', 0)), 2) if pd.notna(row.get('外資7日平均', 0)) else 0,
+                    round(float(row.get('自營商7日平均', 0)), 2) if pd.notna(row.get('自營商7日平均', 0)) else 0,
+                    round(float(row.get('投信7日平均', 0)), 2) if pd.notna(row.get('投信7日平均', 0)) else 0
                 ]
                 data_to_upload.append(data_row)
             
