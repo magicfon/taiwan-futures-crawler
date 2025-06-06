@@ -246,7 +246,7 @@ class GoogleSheetsManager:
         ]
     
     def upload_data(self, df, worksheet_name="歷史資料"):
-        """上傳資料到Google Sheets - 智能管理資料量，避免超過行數限制"""
+        """上傳資料到Google Sheets - 保守的資料管理，不清除歷史資料"""
         if not self.spreadsheet or df.empty:
             return False
         
@@ -257,51 +257,13 @@ class GoogleSheetsManager:
             existing_data = worksheet.get_all_values()
             current_rows = len(existing_data)
             
-            # 如果資料行數過多（超過6000行），清理舊資料，只保留最近30天
-            if current_rows > 6000:
-                self.logger.info(f"檢測到資料行數過多 ({current_rows} 行)，開始清理舊資料...")
-                
-                # 清除除標題外的所有資料
-                worksheet.batch_clear(["A2:Z10000"])
-                
-                # 從資料庫重新獲取最近30天的資料
-                from database_manager import TaifexDatabaseManager
-                db_manager = TaifexDatabaseManager()
-                recent_30d_data = db_manager.get_recent_data(30)
-                
-                if not recent_30d_data.empty:
-                    # 轉換資料庫格式為Google Sheets格式
-                    converted_data = []
-                    for _, row in recent_30d_data.iterrows():
-                        data_row = [
-                            row.get('date', ''),
-                            row.get('contract_code', ''),
-                            row.get('identity_type', ''),
-                            row.get('long_position', 0),
-                            '',  # 多方契約金額 (資料庫無此欄位)
-                            row.get('short_position', 0),
-                            '',  # 空方契約金額 (資料庫無此欄位)
-                            row.get('net_position', 0),
-                            '',  # 多空淨額契約金額 (資料庫無此欄位)
-                            '',  # 多方未平倉口數 (資料庫無此欄位)
-                            '',  # 多方未平倉契約金額 (資料庫無此欄位)
-                            '',  # 空方未平倉口數 (資料庫無此欄位)
-                            '',  # 空方未平倉契約金額 (資料庫無此欄位)
-                            '',  # 多空淨額未平倉口數 (資料庫無此欄位)
-                            '',  # 多空淨額未平倉契約金額 (資料庫無此欄位)
-                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        ]
-                        converted_data.append(data_row)
-                    
-                    # 批量上傳最近30天資料
-                    if converted_data:
-                        worksheet.update('A2', converted_data)
-                        self.logger.info(f"已重新上傳最近30天資料 ({len(converted_data)} 筆)")
-                
-                # 重新檢查行數
-                current_rows = len(worksheet.get_all_values())
+            # 如果接近Google Sheets的10,000行限制，給出警告但不自動清理
+            if current_rows > 9000:
+                self.logger.warning(f"⚠️ Google Sheets行數接近限制 ({current_rows} 行)")
+                self.logger.warning("建議手動整理資料或建立新的工作表")
+                # 不自動清理，讓用戶決定如何處理
             
-            # 現在找到最後一行位置並追加新資料
+            # 找到最後一行位置並追加新資料
             last_row = current_rows
             
             # 準備新資料（適應原始爬蟲資料格式）
@@ -329,9 +291,17 @@ class GoogleSheetsManager:
             
             # 追加新資料到最後一行之後
             if data_to_upload:
-                start_cell = f'A{last_row + 1}'
-                worksheet.update(start_cell, data_to_upload)
-                self.logger.info(f"成功追加 {len(data_to_upload)} 筆資料到 {worksheet_name}")
+                try:
+                    start_cell = f'A{last_row + 1}'
+                    worksheet.update(start_cell, data_to_upload)
+                    self.logger.info(f"成功追加 {len(data_to_upload)} 筆資料到 {worksheet_name}")
+                except Exception as upload_error:
+                    if "exceeds grid limits" in str(upload_error):
+                        self.logger.error("❌ Google Sheets已達行數限制，無法新增更多資料")
+                        self.logger.info("💡 建議：手動清理舊資料或建立新的工作表")
+                        return False
+                    else:
+                        raise upload_error
             
             return True
             
