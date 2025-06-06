@@ -161,6 +161,23 @@ class TaifexDatabaseManager:
         ])
         
         conn.close()
+        
+        # 修復數值欄位的bytes問題，強制轉換為正確的資料類型
+        if not df.empty:
+            numeric_columns = ['total_volume', 'foreign_net', 'dealer_net', 'trust_net']
+            
+            for col in numeric_columns:
+                if col in df.columns:
+                    # 處理bytes類型
+                    df[col] = df[col].apply(lambda x: 
+                        int.from_bytes(x, byteorder='little', signed=True) 
+                        if isinstance(x, bytes) 
+                        else (int(x) if pd.notna(x) and x != '' else 0)
+                    )
+                    
+                    # 確保資料類型為整數
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        
         return df
     
     def export_to_excel(self, output_path, days=30):

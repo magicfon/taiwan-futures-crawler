@@ -246,16 +246,63 @@ class GoogleSheetsManager:
         ]
     
     def upload_data(self, df, worksheet_name="歷史資料"):
-        """上傳資料到Google Sheets - 追加模式，保留所有歷史資料"""
+        """上傳資料到Google Sheets - 智能管理資料量，避免超過行數限制"""
         if not self.spreadsheet or df.empty:
             return False
         
         try:
             worksheet = self.spreadsheet.worksheet(worksheet_name)
             
-            # 找到最後一行有資料的位置
+            # 檢查現有資料行數
             existing_data = worksheet.get_all_values()
-            last_row = len(existing_data)
+            current_rows = len(existing_data)
+            
+            # 如果資料行數過多（超過6000行），清理舊資料，只保留最近30天
+            if current_rows > 6000:
+                self.logger.info(f"檢測到資料行數過多 ({current_rows} 行)，開始清理舊資料...")
+                
+                # 清除除標題外的所有資料
+                worksheet.batch_clear(["A2:Z10000"])
+                
+                # 從資料庫重新獲取最近30天的資料
+                from database_manager import TaifexDatabaseManager
+                db_manager = TaifexDatabaseManager()
+                recent_30d_data = db_manager.get_recent_data(30)
+                
+                if not recent_30d_data.empty:
+                    # 轉換資料庫格式為Google Sheets格式
+                    converted_data = []
+                    for _, row in recent_30d_data.iterrows():
+                        data_row = [
+                            row.get('date', ''),
+                            row.get('contract_code', ''),
+                            row.get('identity_type', ''),
+                            row.get('long_position', 0),
+                            '',  # 多方契約金額 (資料庫無此欄位)
+                            row.get('short_position', 0),
+                            '',  # 空方契約金額 (資料庫無此欄位)
+                            row.get('net_position', 0),
+                            '',  # 多空淨額契約金額 (資料庫無此欄位)
+                            '',  # 多方未平倉口數 (資料庫無此欄位)
+                            '',  # 多方未平倉契約金額 (資料庫無此欄位)
+                            '',  # 空方未平倉口數 (資料庫無此欄位)
+                            '',  # 空方未平倉契約金額 (資料庫無此欄位)
+                            '',  # 多空淨額未平倉口數 (資料庫無此欄位)
+                            '',  # 多空淨額未平倉契約金額 (資料庫無此欄位)
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        ]
+                        converted_data.append(data_row)
+                    
+                    # 批量上傳最近30天資料
+                    if converted_data:
+                        worksheet.update('A2', converted_data)
+                        self.logger.info(f"已重新上傳最近30天資料 ({len(converted_data)} 筆)")
+                
+                # 重新檢查行數
+                current_rows = len(worksheet.get_all_values())
+            
+            # 現在找到最後一行位置並追加新資料
+            last_row = current_rows
             
             # 準備新資料（適應原始爬蟲資料格式）
             data_to_upload = []
