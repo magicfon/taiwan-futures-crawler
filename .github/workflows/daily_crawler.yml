@@ -19,6 +19,10 @@ on:
         description: '如果沒有資料是否重試'
         required: false
         default: 'true'
+      skip_missing_check:
+        description: '跳過遺漏資料檢查'
+        required: false
+        default: 'false'
 
 jobs:
   crawl-data:
@@ -43,6 +47,8 @@ jobs:
         mkdir -p output
         mkdir -p logs
         mkdir -p charts
+        mkdir -p reports
+        mkdir -p data
         
     - name: 設定Google Sheets認證
       env:
@@ -78,6 +84,37 @@ jobs:
         echo "系統指令檢查:"
         date
         echo "UTC時間: $(date -u)"
+        
+    - name: 檢查並補齊遺漏資料
+      id: missing_check
+      if: github.event.inputs.skip_missing_check != 'true'
+      run: |
+        echo "🔍 開始檢查近30天遺漏的交易日資料..."
+        
+        # 執行遺漏資料檢查和補齊
+        python check_and_fill_missing_data.py --days 30
+        
+        # 檢查執行結果
+        if [ $? -eq 0 ]; then
+          echo "✅ 遺漏資料檢查和補齊完成"
+          echo "success=true" >> $GITHUB_OUTPUT
+        else
+          echo "⚠️ 遺漏資料檢查過程中有警告，但繼續執行"
+          echo "success=false" >> $GITHUB_OUTPUT
+        fi
+        
+        # 顯示檢查報告
+        if [ -f "reports/missing_data_check_report.json" ]; then
+          echo "📋 檢查報告摘要:"
+          cat reports/missing_data_check_report.json
+        fi
+        
+        # 顯示檢查日誌
+        if [ -f "missing_data_check.log" ]; then
+          echo ""
+          echo "📄 檢查日誌 (最後20行):"
+          tail -20 missing_data_check.log
+        fi
         
     - name: 執行爬蟲 (第一次嘗試)
       id: first_attempt
@@ -129,14 +166,33 @@ jobs:
           echo "❌ 重試後仍然沒有資料檔案"
           echo "success=false" >> $GITHUB_OUTPUT
         fi
+
+    - name: 生成30天資料圖表和報告
+      if: steps.first_attempt.outputs.success == 'true' || steps.retry_attempt.outputs.success == 'true'
+      run: |
+        echo "📊 開始生成30天資料圖表和報告..."
+        
+        # 嘗試生成圖表報告
+        if [ -f "daily_report_generator.py" ]; then
+          python daily_report_generator.py --days 30 --output charts/ || echo "⚠️ 圖表生成失敗，但繼續執行"
+        fi
+        
+        # 嘗試生成Telegram報告
+        if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+          if [ -f "test_telegram_report.py" ]; then
+            python test_telegram_report.py || echo "⚠️ Telegram報告發送失敗"
+          fi
+        fi
         
     - name: 檢查最終結果
       run: |
         FIRST_SUCCESS="${{ steps.first_attempt.outputs.success }}"
         RETRY_SUCCESS="${{ steps.retry_attempt.outputs.success }}"
+        MISSING_CHECK="${{ steps.missing_check.outputs.success }}"
         
-        echo "=== 爬取結果摘要 ==="
-        echo "第一次嘗試: $FIRST_SUCCESS"
+        echo "=== 執行結果摘要 ==="
+        echo "遺漏資料檢查: $MISSING_CHECK"
+        echo "第一次爬取: $FIRST_SUCCESS"
         if [ "$FIRST_SUCCESS" = "false" ]; then
           echo "重試結果: $RETRY_SUCCESS"
         fi
@@ -146,15 +202,17 @@ jobs:
         ls -la output/ || echo "輸出目錄為空"
         
         echo ""
+        echo "=== 圖表目錄內容 ==="
+        ls -la charts/ || echo "圖表目錄為空"
+        
+        echo ""
+        echo "=== 報告目錄內容 ==="
+        ls -la reports/ || echo "報告目錄為空"
+        
+        echo ""
         echo "=== 資料庫檔案 ==="
         if [ -d "data" ]; then
           ls -la data/
-        fi
-        
-        echo ""
-        echo "=== 報告檔案 ==="
-        if [ -d "reports" ]; then
-          ls -la reports/
         fi
         
         echo ""
@@ -193,12 +251,21 @@ jobs:
           HAS_CHANGES=true
         fi
         
-        # 2. 檢查日誌檔案 (通常被忽略，但我們可以創建摘要)
+        # 2. 檢查遺漏資料檢查報告
+        if [ -f "reports/missing_data_check_report.json" ]; then
+          git add "reports/missing_data_check_report.json"
+          echo "已添加: reports/missing_data_check_report.json"
+          HAS_CHANGES=true
+        fi
+        
+        # 3. 檢查日誌檔案 (通常被忽略，但我們可以創建摘要)
         if [ -f taifex_crawler.log ]; then
           # 創建日誌摘要而不是整個日誌檔案
           echo "=== 最後執行摘要 ===" > execution_summary.txt
           echo "執行時間: $(date)" >> execution_summary.txt
-          echo "執行結果: ${{ steps.first_attempt.outputs.success }}" >> execution_summary.txt
+          echo "遺漏資料檢查: ${{ steps.missing_check.outputs.success }}" >> execution_summary.txt
+          echo "第一次爬取: ${{ steps.first_attempt.outputs.success }}" >> execution_summary.txt
+          echo "重試結果: ${{ steps.retry_attempt.outputs.success }}" >> execution_summary.txt
           echo "" >> execution_summary.txt
           echo "=== 日誌最後20行 ===" >> execution_summary.txt
           tail -20 taifex_crawler.log >> execution_summary.txt
@@ -207,7 +274,7 @@ jobs:
           HAS_CHANGES=true
         fi
         
-        # 3. 其他不被忽略的重要檔案
+        # 4. 其他不被忽略的重要檔案
         if [ -f "config/spreadsheet_config.json" ]; then
           git add "config/spreadsheet_config.json"
           echo "已添加: config/spreadsheet_config.json"
@@ -230,12 +297,15 @@ jobs:
           git push || echo "推送失敗，可能沒有變更"
         fi
         
-    - name: 上傳執行日誌
+    - name: 上傳執行日誌和報告
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: crawler-logs-${{ github.run_number }}
+        name: crawler-logs-and-reports-${{ github.run_number }}
         path: |
           taifex_crawler.log
+          missing_data_check.log
           output/
+          charts/
+          reports/
         retention-days: 30 
