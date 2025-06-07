@@ -67,7 +67,10 @@ config/telegram_config.json
 output/*.csv
 output/*.xlsx
 output_history/
+# 忽略reports目錄中的大部分檔案，但保留重要的報告
 reports/
+!reports/missing_data_check_report.json
+!reports/daily_summary.json
 charts/*.png
 charts/*.jpg
 real_charts/

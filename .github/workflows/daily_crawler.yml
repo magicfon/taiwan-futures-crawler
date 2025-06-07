@@ -239,27 +239,40 @@ jobs:
         
         HAS_CHANGES=false
         
-        # 檢查特定的重要檔案（這些檔案我們想要在GitHub Actions中保留）
-        # 但需要考慮.gitignore的設定
+        echo "🔍 檢查需要提交的重要檔案..."
         
         # 1. 檢查最新30天資料檔案
         if [ -f "output/台期所最新30天資料.xlsx" ]; then
           # 由於output/*.xlsx被忽略，我們創建一個特殊的檔案名
-          cp "output/台期所最新30天資料.xlsx" "latest_30days_data.xlsx"
-          git add "latest_30days_data.xlsx"
-          echo "已添加: latest_30days_data.xlsx (來自output/台期所最新30天資料.xlsx)"
-          HAS_CHANGES=true
+          cp "output/台期所最新30天資料.xlsx" "latest_30days_data.xlsx" || echo "⚠️ 複製30天資料檔案失敗"
+          if [ -f "latest_30days_data.xlsx" ]; then
+            git add "latest_30days_data.xlsx" || echo "⚠️ 添加30天資料檔案失敗"
+            echo "✅ 已添加: latest_30days_data.xlsx (來自output/台期所最新30天資料.xlsx)"
+            HAS_CHANGES=true
+          fi
         fi
         
-        # 2. 檢查遺漏資料檢查報告
+        # 2. 檢查遺漏資料檢查報告（現在.gitignore允許這個檔案）
         if [ -f "reports/missing_data_check_report.json" ]; then
-          git add "reports/missing_data_check_report.json"
-          echo "已添加: reports/missing_data_check_report.json"
-          HAS_CHANGES=true
+          # 確保reports目錄存在且可寫
+          mkdir -p reports || echo "⚠️ 無法創建reports目錄"
+          if git add "reports/missing_data_check_report.json" 2>/dev/null; then
+            echo "✅ 已添加: reports/missing_data_check_report.json"
+            HAS_CHANGES=true
+          else
+            echo "⚠️ 無法添加遺漏資料檢查報告，可能被.gitignore忽略"
+            # 作為後備方案，複製到根目錄
+            cp "reports/missing_data_check_report.json" "missing_data_report.json" 2>/dev/null || echo "⚠️ 複製報告檔案失敗"
+            if [ -f "missing_data_report.json" ]; then
+              git add "missing_data_report.json" || echo "⚠️ 添加備用報告檔案失敗"
+              echo "✅ 已添加: missing_data_report.json (備用)"
+              HAS_CHANGES=true
+            fi
+          fi
         fi
         
         # 3. 檢查日誌檔案 (通常被忽略，但我們可以創建摘要)
-        if [ -f taifex_crawler.log ]; then
+        if [ -f "taifex_crawler.log" ]; then
           # 創建日誌摘要而不是整個日誌檔案
           echo "=== 最後執行摘要 ===" > execution_summary.txt
           echo "執行時間: $(date)" >> execution_summary.txt
@@ -268,24 +281,38 @@ jobs:
           echo "重試結果: ${{ steps.retry_attempt.outputs.success }}" >> execution_summary.txt
           echo "" >> execution_summary.txt
           echo "=== 日誌最後20行 ===" >> execution_summary.txt
-          tail -20 taifex_crawler.log >> execution_summary.txt
-          git add execution_summary.txt
-          echo "已添加: execution_summary.txt"
+          tail -20 taifex_crawler.log >> execution_summary.txt 2>/dev/null || echo "無法讀取日誌內容" >> execution_summary.txt
+          git add execution_summary.txt || echo "⚠️ 添加執行摘要失敗"
+          echo "✅ 已添加: execution_summary.txt"
           HAS_CHANGES=true
         fi
         
         # 4. 其他不被忽略的重要檔案
         if [ -f "config/spreadsheet_config.json" ]; then
-          git add "config/spreadsheet_config.json"
-          echo "已添加: config/spreadsheet_config.json"
-          HAS_CHANGES=true
+          if git add "config/spreadsheet_config.json" 2>/dev/null; then
+            echo "✅ 已添加: config/spreadsheet_config.json"
+            HAS_CHANGES=true
+          else
+            echo "⚠️ 無法添加spreadsheet_config.json"
+          fi
         fi
+        
+        # 5. 顯示實際將要提交的檔案
+        echo ""
+        echo "📋 將要提交的檔案："
+        git diff --cached --name-only 2>/dev/null || echo "沒有暫存的檔案"
         
         # 提交變更
         if [ "$HAS_CHANGES" = true ]; then
-          git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料和執行摘要" || echo "沒有需要提交的變更"
+          echo ""
+          echo "💾 正在提交變更..."
+          if git commit -m "🤖 自動更新: $(date '+%Y-%m-%d %H:%M:%S') 台期所資料和執行摘要" 2>/dev/null; then
+            echo "✅ 提交成功"
+          else
+            echo "⚠️ 提交失敗或沒有變更需要提交"
+          fi
         else
-          echo "沒有重要檔案需要提交"
+          echo "📝 沒有重要檔案需要提交"
         fi
         
     - name: 推送更新
