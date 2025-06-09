@@ -1,0 +1,122 @@
+name: ⚡ 手動執行台期所資料爬取
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_type:
+        description: '資料類型'
+        required: true
+        default: 'COMPLETE'
+        type: choice
+        options:
+          - 'TRADING'
+          - 'COMPLETE'
+      contracts:
+        description: '契約代碼 (用逗號分隔)'
+        required: true
+        default: 'TX,TE,MTX'
+        type: string
+      date_range:
+        description: '日期範圍'
+        required: true
+        default: 'today'
+        type: choice
+        options:
+          - 'today'
+          - 'yesterday'
+          - 'custom'
+      custom_date:
+        description: '自訂日期 (YYYY-MM-DD)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  manual-crawl:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔄 檢出程式碼
+      uses: actions/checkout@v4
+    
+    - name: 🐍 設定Python環境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+    
+    - name: 📦 安裝相依套件
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🕐 顯示執行資訊
+      run: |
+        echo "🚀 手動執行台期所資料爬取"
+        echo "UTC時間: $(date -u)"
+        echo "台灣時間: $(TZ='Asia/Taipei' date)"
+        echo "資料類型: ${{ inputs.data_type }}"
+        echo "契約代碼: ${{ inputs.contracts }}"
+        echo "日期範圍: ${{ inputs.date_range }}"
+        if [ "${{ inputs.custom_date }}" != "" ]; then
+          echo "自訂日期: ${{ inputs.custom_date }}"
+        fi
+    
+    - name: 📊 執行資料爬取
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        # 決定日期參數
+        if [ "${{ inputs.date_range }}" = "custom" ] && [ "${{ inputs.custom_date }}" != "" ]; then
+          DATE_PARAM="${{ inputs.custom_date }}"
+        elif [ "${{ inputs.date_range }}" = "yesterday" ]; then
+          DATE_PARAM="$(TZ='Asia/Taipei' date -d 'yesterday' +%Y-%m-%d)"
+        else
+          DATE_PARAM="today"
+        fi
+        
+        echo "使用日期參數: $DATE_PARAM"
+        
+        # 執行爬蟲
+        python taifex_crawler.py \
+          --date-range "$DATE_PARAM" \
+          --contracts "${{ inputs.contracts }}" \
+          --identities ALL \
+          --data_type "${{ inputs.data_type }}" \
+          --max_workers 5 \
+          --delay 1.0
+    
+    - name: 📁 上傳爬取結果
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: manual-crawl-results-${{ inputs.data_type }}-${{ github.run_number }}
+        path: |
+          output/*.csv
+          output/*.xlsx
+          charts/*.png
+          *.log
+        retention-days: 30
+    
+    - name: 💬 執行結果摘要
+      if: always()
+      run: |
+        echo "## 🎯 執行結果摘要" >> $GITHUB_STEP_SUMMARY
+        echo "- **資料類型**: ${{ inputs.data_type }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **契約代碼**: ${{ inputs.contracts }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **執行時間**: $(TZ='Asia/Taipei' date)" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "- **執行狀態**: ✅ 成功" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.data_type }}" = "TRADING" ]; then
+            echo "- **結果**: 交易量資料已上傳到Google Sheets「交易量資料」分頁" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **結果**: 完整資料已上傳到Google Sheets「完整資料」分頁" >> $GITHUB_STEP_SUMMARY
+            echo "- **圖表**: 已生成並發送到Telegram" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "- **執行狀態**: ❌ 失敗" >> $GITHUB_STEP_SUMMARY
+          echo "- **建議**: 請檢查Artifacts中的日誌檔案" >> $GITHUB_STEP_SUMMARY
+        fi 

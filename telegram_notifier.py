@@ -83,6 +83,18 @@ class TelegramNotifier:
             logger.error(f"發送訊息時發生錯誤: {e}")
             return False
     
+    def send_simple_message(self, text):
+        """
+        發送簡單文字訊息（交易量摘要專用）
+        
+        Args:
+            text: 要發送的文字內容
+            
+        Returns:
+            bool: 是否發送成功
+        """
+        return self.send_message(text, parse_mode="Markdown")
+    
     def send_photo(self, photo_path, caption="", parse_mode="Markdown"):
         """
         發送圖片

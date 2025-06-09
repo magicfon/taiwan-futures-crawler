@@ -39,8 +39,10 @@ class MissingDataChecker:
             logger.warning(f"無法初始化Google Sheets: {e}")
             self.has_google_sheets = False
         
-        # 預設契約代碼
-        self.default_contracts = ['TX', 'TE', 'MTX']
+        # 預設契約代碼 - 與 crawl_history.py 保持一致
+        self.default_contracts = ['TX', 'TE', 'MTX', 'ZMX', 'NQF']
+        # 預設身份別 - 與 crawl_history.py 保持一致  
+        self.default_identities = ['自營商', '投信', '外資']
         
     def is_trading_day(self, date):
         """檢查是否為交易日（非週末）"""
@@ -136,12 +138,15 @@ class MissingDataChecker:
                 date_str = date.strftime('%Y-%m-%d')
                 logger.info(f"📈 正在爬取 {date_str} 的資料...")
                 
-                # 執行爬蟲
+                # 執行爬蟲 - 與 crawl_history.py 使用相同參數
                 cmd = [
                     'python', 'taifex_crawler.py',
                     '--date-range', f'{date_str},{date_str}',
-                    '--contracts', ','.join(self.default_contracts)
+                    '--contracts', ','.join(self.default_contracts),
+                    '--identities'
                 ]
+                # 添加每個身份別作為單獨的參數
+                cmd.extend(self.default_identities)
                 
                 result = subprocess.run(
                     cmd,

@@ -53,6 +53,26 @@ CONTRACT_NAMES = {
 # 身份別列表
 IDENTITIES = ['自營商', '投信', '外資']
 
+# 添加資料類型配置
+DATA_TYPES = {
+    'TRADING': '交易量資料',  # 只包含交易口數和金額
+    'COMPLETE': '完整資料'    # 包含交易量和未平倉資料
+}
+
+# 交易量資料欄位（下午2點左右可取得）
+TRADING_FIELDS = [
+    '多方交易口數', '多方契約金額', 
+    '空方交易口數', '空方契約金額', 
+    '多空淨額交易口數', '多空淨額契約金額'
+]
+
+# 未平倉資料欄位（下午3點半左右可取得）
+POSITION_FIELDS = [
+    '多方未平倉口數', '多方未平倉契約金額',
+    '空方未平倉口數', '空方未平倉契約金額',
+    '多空淨額未平倉口數', '多空淨額未平倉契約金額'
+]
+
 # 設定日誌
 logging.basicConfig(
     level=logging.INFO,
@@ -68,7 +88,7 @@ TW_TZ = pytz.timezone('Asia/Taipei')
 
 class TaifexCrawler:
     def __init__(self, output_dir="output", max_retries=3, delay=0.5, 
-                 max_workers=10, timeout=30, use_proxy=False):
+                 max_workers=10, timeout=30, use_proxy=False, data_type='COMPLETE'):
         """
         初始化爬蟲
         
@@ -79,6 +99,7 @@ class TaifexCrawler:
             max_workers: 最大工作線程數
             timeout: 請求超時時間 (秒)
             use_proxy: 是否使用代理
+            data_type: 資料類型 ('TRADING': 僅交易量, 'COMPLETE': 完整資料)
         """
         self.output_dir = output_dir
         self.max_retries = max_retries
@@ -86,6 +107,7 @@ class TaifexCrawler:
         self.max_workers = max_workers
         self.timeout = timeout
         self.use_proxy = use_proxy
+        self.data_type = data_type
         self.session = requests.Session()
         
         # 設定請求標頭
@@ -304,23 +326,41 @@ class TaifexCrawler:
     def _build_data_dict(self, date_str, contract, identity, cell_texts, start_idx):
         """構建資料字典"""
         try:
+            # 基本資料
             data = {
                 '日期': date_str,
                 '契約名稱': contract,
                 '身份別': identity,
-                '多方交易口數': self._parse_number(cell_texts[start_idx]) if len(cell_texts) > start_idx else 0,
-                '多方契約金額': self._parse_number(cell_texts[start_idx+1]) if len(cell_texts) > start_idx+1 else 0,
-                '空方交易口數': self._parse_number(cell_texts[start_idx+2]) if len(cell_texts) > start_idx+2 else 0,
-                '空方契約金額': self._parse_number(cell_texts[start_idx+3]) if len(cell_texts) > start_idx+3 else 0,
-                '多空淨額交易口數': self._parse_number(cell_texts[start_idx+4]) if len(cell_texts) > start_idx+4 else 0,
-                '多空淨額契約金額': self._parse_number(cell_texts[start_idx+5]) if len(cell_texts) > start_idx+5 else 0,
-                '多方未平倉口數': self._parse_number(cell_texts[start_idx+6]) if len(cell_texts) > start_idx+6 else 0,
-                '多方未平倉契約金額': self._parse_number(cell_texts[start_idx+7]) if len(cell_texts) > start_idx+7 else 0,
-                '空方未平倉口數': self._parse_number(cell_texts[start_idx+8]) if len(cell_texts) > start_idx+8 else 0,
-                '空方未平倉契約金額': self._parse_number(cell_texts[start_idx+9]) if len(cell_texts) > start_idx+9 else 0,
-                '多空淨額未平倉口數': self._parse_number(cell_texts[start_idx+10]) if len(cell_texts) > start_idx+10 else 0,
-                '多空淨額未平倉契約金額': self._parse_number(cell_texts[start_idx+11]) if len(cell_texts) > start_idx+11 else 0
             }
+            
+            # 根據資料類型決定要提取的欄位
+            if self.data_type == 'TRADING':
+                # 僅提取交易量資料
+                data.update({
+                    '多方交易口數': self._parse_number(cell_texts[start_idx]) if len(cell_texts) > start_idx else 0,
+                    '多方契約金額': self._parse_number(cell_texts[start_idx+1]) if len(cell_texts) > start_idx+1 else 0,
+                    '空方交易口數': self._parse_number(cell_texts[start_idx+2]) if len(cell_texts) > start_idx+2 else 0,
+                    '空方契約金額': self._parse_number(cell_texts[start_idx+3]) if len(cell_texts) > start_idx+3 else 0,
+                    '多空淨額交易口數': self._parse_number(cell_texts[start_idx+4]) if len(cell_texts) > start_idx+4 else 0,
+                    '多空淨額契約金額': self._parse_number(cell_texts[start_idx+5]) if len(cell_texts) > start_idx+5 else 0,
+                })
+            else:
+                # 提取完整資料（交易量 + 未平倉）
+                data.update({
+                    '多方交易口數': self._parse_number(cell_texts[start_idx]) if len(cell_texts) > start_idx else 0,
+                    '多方契約金額': self._parse_number(cell_texts[start_idx+1]) if len(cell_texts) > start_idx+1 else 0,
+                    '空方交易口數': self._parse_number(cell_texts[start_idx+2]) if len(cell_texts) > start_idx+2 else 0,
+                    '空方契約金額': self._parse_number(cell_texts[start_idx+3]) if len(cell_texts) > start_idx+3 else 0,
+                    '多空淨額交易口數': self._parse_number(cell_texts[start_idx+4]) if len(cell_texts) > start_idx+4 else 0,
+                    '多空淨額契約金額': self._parse_number(cell_texts[start_idx+5]) if len(cell_texts) > start_idx+5 else 0,
+                    '多方未平倉口數': self._parse_number(cell_texts[start_idx+6]) if len(cell_texts) > start_idx+6 else 0,
+                    '多方未平倉契約金額': self._parse_number(cell_texts[start_idx+7]) if len(cell_texts) > start_idx+7 else 0,
+                    '空方未平倉口數': self._parse_number(cell_texts[start_idx+8]) if len(cell_texts) > start_idx+8 else 0,
+                    '空方未平倉契約金額': self._parse_number(cell_texts[start_idx+9]) if len(cell_texts) > start_idx+9 else 0,
+                    '多空淨額未平倉口數': self._parse_number(cell_texts[start_idx+10]) if len(cell_texts) > start_idx+10 else 0,
+                    '多空淨額未平倉契約金額': self._parse_number(cell_texts[start_idx+11]) if len(cell_texts) > start_idx+11 else 0
+                })
+            
             return data
         except Exception as e:
             logger.error(f"構建資料字典時發生錯誤: {str(e)}")
@@ -477,19 +517,35 @@ class TaifexCrawler:
                 '日期': date_str,
                 '契約名稱': contract,
                 '身份別': identity,
-                '多方交易口數': safe_get('多方交易口數'),
-                '多方契約金額': safe_get('多方契約金額'),
-                '空方交易口數': safe_get('空方交易口數'),
-                '空方契約金額': safe_get('空方契約金額'),
-                '多空淨額交易口數': safe_get('多空淨額交易口數'),
-                '多空淨額契約金額': safe_get('多空淨額契約金額'),
-                '多方未平倉口數': safe_get('多方未平倉口數'),
-                '多方未平倉契約金額': safe_get('多方未平倉契約金額'),
-                '空方未平倉口數': safe_get('空方未平倉口數'),
-                '空方未平倉契約金額': safe_get('空方未平倉契約金額'),
-                '多空淨額未平倉口數': safe_get('多空淨額未平倉口數'),
-                '多空淨額未平倉契約金額': safe_get('多空淨額未平倉契約金額')
             }
+            
+            # 根據資料類型決定要提取的欄位
+            if self.data_type == 'TRADING':
+                # 僅提取交易量資料
+                data.update({
+                    '多方交易口數': safe_get('多方交易口數'),
+                    '多方契約金額': safe_get('多方契約金額'),
+                    '空方交易口數': safe_get('空方交易口數'),
+                    '空方契約金額': safe_get('空方契約金額'),
+                    '多空淨額交易口數': safe_get('多空淨額交易口數'),
+                    '多空淨額契約金額': safe_get('多空淨額契約金額'),
+                })
+            else:
+                # 提取完整資料（交易量 + 未平倉）
+                data.update({
+                    '多方交易口數': safe_get('多方交易口數'),
+                    '多方契約金額': safe_get('多方契約金額'),
+                    '空方交易口數': safe_get('空方交易口數'),
+                    '空方契約金額': safe_get('空方契約金額'),
+                    '多空淨額交易口數': safe_get('多空淨額交易口數'),
+                    '多空淨額契約金額': safe_get('多空淨額契約金額'),
+                    '多方未平倉口數': safe_get('多方未平倉口數'),
+                    '多方未平倉契約金額': safe_get('多方未平倉契約金額'),
+                    '空方未平倉口數': safe_get('空方未平倉口數'),
+                    '空方未平倉契約金額': safe_get('空方未平倉契約金額'),
+                    '多空淨額未平倉口數': safe_get('多空淨額未平倉口數'),
+                    '多空淨額未平倉契約金額': safe_get('多空淨額未平倉契約金額')
+                })
             
             # 記錄日誌信息
             logger.debug(f"使用絕對位置解析 {contract} {identity}，在第 {target_index} 行")
@@ -779,6 +835,10 @@ def parse_arguments():
                         choices=IDENTITIES + ['ALL', 'NONE'], default=['ALL'],
                         help='要爬取的身份別，例如 自營商 投信 外資，或使用 ALL 爬取所有身份別，NONE 表示不爬取身份別資料')
     
+    # 資料類型參數
+    parser.add_argument('--data_type', type=str, choices=['TRADING', 'COMPLETE'], default='COMPLETE',
+                        help='資料類型: TRADING=僅交易量資料(下午2點), COMPLETE=完整資料(下午3點半)')
+    
     # 輸出參數
     parser.add_argument('--output_dir', type=str, default='output',
                         help='輸出目錄路徑')
@@ -804,11 +864,11 @@ def parse_arguments():
         elif ',' in args.date_range:
             # 日期範圍: YYYY-MM-DD,YYYY-MM-DD
             dates = args.date_range.split(',')
-            start_date = datetime.datetime.strptime(dates[0].strip(), "%Y-%m-%d")
-            end_date = datetime.datetime.strptime(dates[1].strip(), "%Y-%m-%d")
+            start_date = TW_TZ.localize(datetime.datetime.strptime(dates[0].strip(), "%Y-%m-%d"))
+            end_date = TW_TZ.localize(datetime.datetime.strptime(dates[1].strip(), "%Y-%m-%d"))
         else:
             # 單日: YYYY-MM-DD
-            date = datetime.datetime.strptime(args.date_range, "%Y-%m-%d")
+            date = TW_TZ.localize(datetime.datetime.strptime(args.date_range, "%Y-%m-%d"))
             start_date = date
             end_date = date
     elif args.year:
@@ -817,37 +877,31 @@ def parse_arguments():
         if args.month:
             # 如果同時指定了月份，則爬取該月
             month = args.month
-            start_date = datetime.datetime(year, month, 1)
+            start_date = TW_TZ.localize(datetime.datetime(year, month, 1))
             if month == 12:
-                end_date = datetime.datetime(year + 1, 1, 1) - datetime.timedelta(days=1)
+                end_date = TW_TZ.localize(datetime.datetime(year + 1, 1, 1)) - datetime.timedelta(days=1)
             else:
-                end_date = datetime.datetime(year, month + 1, 1) - datetime.timedelta(days=1)
+                end_date = TW_TZ.localize(datetime.datetime(year, month + 1, 1)) - datetime.timedelta(days=1)
         else:
             # 只指定年份，爬取整年
-            start_date = datetime.datetime(year, 1, 1)
-            end_date = datetime.datetime(year, 12, 31)
+            start_date = TW_TZ.localize(datetime.datetime(year, 1, 1))
+            end_date = TW_TZ.localize(datetime.datetime(year, 12, 31))
     else:
         # 使用明確的開始和結束日期
         if not args.start_date:
             # 默認為當年初至今
             today = datetime.datetime.now(TW_TZ)
-            start_date = datetime.datetime(today.year, 1, 1)
+            start_date = TW_TZ.localize(datetime.datetime(today.year, 1, 1))
             end_date = today
         else:
             # 解析用戶提供的日期
-            start_date = datetime.datetime.strptime(args.start_date, "%Y/%m/%d")
+            start_date = TW_TZ.localize(datetime.datetime.strptime(args.start_date, "%Y/%m/%d"))
             if args.end_date:
-                end_date = datetime.datetime.strptime(args.end_date, "%Y/%m/%d")
+                end_date = TW_TZ.localize(datetime.datetime.strptime(args.end_date, "%Y/%m/%d"))
             else:
                 end_date = datetime.datetime.now(TW_TZ)
     
     # 統一時間部分 - 將所有日期設為當天的00:00:00，避免時間比較問題
-    # 確保所有日期都有時區資訊
-    if start_date.tzinfo is None:
-        start_date = TW_TZ.localize(start_date)
-    if end_date.tzinfo is None:
-        end_date = TW_TZ.localize(end_date)
-    
     start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
     end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
     
@@ -887,6 +941,7 @@ def main():
     logger.info(f"爬取日期範圍: {args.start_date.strftime('%Y/%m/%d')} - {args.end_date.strftime('%Y/%m/%d')}")
     logger.info(f"契約: {', '.join(args.contracts)}")
     logger.info(f"身份別: {', '.join(args.identities) if args.identities else '不爬取身份別資料'}")
+    logger.info(f"資料類型: {DATA_TYPES.get(args.data_type, args.data_type)}")
     
     # 初始化資料庫管理器
     if DB_AVAILABLE:
@@ -913,7 +968,8 @@ def main():
         output_dir=args.output_dir,
         max_workers=args.max_workers,
         delay=args.delay,
-        max_retries=args.max_retries
+        max_retries=args.max_retries,
+        data_type=args.data_type
     )
     
     # 爬取資料
@@ -1001,10 +1057,15 @@ def main():
                             recent_data = db_manager.get_recent_data(30)
                             summary_data = db_manager.get_daily_summary(30)
                             
-                            # 上傳主要資料
+                            # 上傳主要資料 - 根據爬取的資料類型選擇工作表
                             if not recent_data.empty:
-                                sheets_manager.upload_data(recent_data)
-                                logger.info("✅ 資料已上傳到Google Sheets")
+                                sheets_manager.upload_data(recent_data, data_type=args.data_type)
+                                logger.info(f"✅ {DATA_TYPES.get(args.data_type, args.data_type)}已上傳到Google Sheets")
+                            
+                            # 如果有當前爬取的資料，也上傳它
+                            if not df.empty:
+                                sheets_manager.upload_data(df, data_type=args.data_type)
+                                logger.info(f"✅ 當前爬取的{DATA_TYPES.get(args.data_type, args.data_type)}已上傳到Google Sheets")
                             
                             # 上傳摘要資料
                             if not summary_data.empty:
@@ -1016,121 +1077,91 @@ def main():
                             sheets_manager.update_system_info()
                             
                             logger.info(f"🌐 Google試算表網址: {sheets_manager.get_spreadsheet_url()}")
-                            logger.info("💡 提示: 將此網址加入書籤，隨時查看最新資料")
+                            if args.data_type == 'TRADING':
+                                logger.info("💡 提示: 下午2點的交易量資料已上傳到「交易量資料」分頁")
+                                logger.info("💡 請在下午3點半後再次執行程式爬取完整資料")
+                            else:
+                                logger.info("💡 提示: 完整資料已上傳到「完整資料」分頁，包含交易量和未平倉資料")
                     
                     except Exception as e:
                         logger.error(f"Google Sheets上傳失敗: {e}")
                         logger.info("本地資料已正常保存，可稍後手動上傳")
                 
-                # 4. 生成圖表並發送到Telegram（如果可用）
-                if CHART_AVAILABLE and TELEGRAM_AVAILABLE:
+                # 4. Telegram通知處理
+                if TELEGRAM_AVAILABLE:
                     try:
-                        logger.info("🎨 開始生成圖表...")
+                        # 初始化Telegram通知器
+                        notifier = TelegramNotifier()
                         
-                        # 初始化圖表生成器
-                        chart_generator = ChartGenerator(output_dir="charts")
-                        
-                        # 優先從Google Sheets獲取30天歷史資料
-                        chart_data = None
-                        if sheets_manager and sheets_manager.spreadsheet:
-                            logger.info("📊 從Google Sheets載入歷史資料...")
-                            chart_data = chart_generator.load_data_from_google_sheets(30)
-                        
-                        # 如果Google Sheets沒有資料，則從資料庫獲取
-                        if chart_data is None or chart_data.empty:
-                            if db_manager:
-                                logger.info("📊 從資料庫載入歷史資料...")
-                                db_data = db_manager.get_recent_data(30)
-                                # 轉換資料庫格式為圖表格式
-                                if not db_data.empty:
-                                    chart_data = convert_db_data_for_charts(db_data)
+                        if notifier.is_configured() and notifier.test_connection():
+                            if args.data_type == 'TRADING':
+                                # 交易量資料：發送簡單文字摘要
+                                logger.info("📱 發送交易量資料摘要到Telegram...")
+                                summary_text = generate_trading_summary(df, datetime.datetime.now(TW_TZ))
+                                success = notifier.send_simple_message(summary_text)
+                                
+                                if success:
+                                    logger.info("📱 交易量摘要已發送到Telegram")
                                 else:
-                                    chart_data = pd.DataFrame()
-                            else:
-                                # 最後嘗試從當前爬取的資料
-                                if not df.empty:
-                                    logger.info("📊 使用今日爬取資料生成圖表...")
-                                    chart_data = df.copy()
-                                    # 確保有圖表生成器需要的欄位
-                                    if '契約名稱' not in chart_data.columns and '契約代碼' in chart_data.columns:
-                                        chart_data['契約名稱'] = chart_data['契約代碼']
-                                else:
-                                    chart_data = pd.DataFrame()
-                        
-                        # 最終檢查圖表資料
-                        if not chart_data.empty:
-                            logger.info(f"📊 使用 {len(chart_data)} 筆資料生成圖表")
-                            logger.info(f"📋 資料欄位: {chart_data.columns.tolist()}")
+                                    logger.warning("⚠️ Telegram交易量摘要發送失敗")
                             
-                            # 檢查必要欄位
-                            required_cols = ['日期', '契約名稱']
-                            missing_cols = [col for col in required_cols if col not in chart_data.columns]
-                            
-                            if missing_cols:
-                                logger.warning(f"⚠️ 圖表資料缺少必要欄位: {missing_cols}")
-                                logger.info("🔧 嘗試修復欄位名稱...")
+                            elif args.data_type == 'COMPLETE' and CHART_AVAILABLE:
+                                # 完整資料：生成圖表並發送報告
+                                logger.info("🎨 開始生成圖表並發送到Telegram...")
                                 
-                                # 嘗試修復欄位名稱
-                                if '日期' not in chart_data.columns:
-                                    for date_col in ['date', 'Date', '交易日期']:
-                                        if date_col in chart_data.columns:
-                                            chart_data['日期'] = pd.to_datetime(chart_data[date_col])
-                                            break
+                                # 初始化圖表生成器
+                                chart_generator = ChartGenerator(output_dir="charts")
                                 
-                                if '契約名稱' not in chart_data.columns:
-                                    for contract_col in ['contract_code', 'Contract', '契約代碼']:
-                                        if contract_col in chart_data.columns:
-                                            chart_data['契約名稱'] = chart_data[contract_col]
-                                            break
+                                # 優先從Google Sheets獲取30天歷史資料
+                                chart_data = None
+                                if sheets_manager and sheets_manager.spreadsheet:
+                                    logger.info("📊 從Google Sheets載入歷史資料...")
+                                    chart_data = chart_generator.load_data_from_google_sheets(30)
                                 
-                                # 確保數值欄位存在
-                                if '多空淨額交易口數' not in chart_data.columns:
-                                    chart_data['多空淨額交易口數'] = 0
-                                if '多空淨額未平倉口數' not in chart_data.columns:
-                                    chart_data['多空淨額未平倉口數'] = 0
-                            
-                            # 生成所有圖表
-                            chart_paths = chart_generator.generate_all_charts(chart_data)
-                            
-                            if chart_paths:
-                                logger.info(f"📊 已生成 {len(chart_paths)} 個圖表")
+                                # 如果Google Sheets沒有資料，則從資料庫獲取
+                                if chart_data is None or chart_data.empty:
+                                    if db_manager:
+                                        logger.info("📊 從資料庫載入歷史資料...")
+                                        chart_data = db_manager.get_recent_data(30)
+                                    else:
+                                        # 最後嘗試從當前爬取的資料
+                                        chart_data = df
                                 
-                                # 生成摘要文字
-                                summary_text = chart_generator.generate_summary_text(chart_data)
-                                
-                                # 初始化Telegram通知器（從環境變數讀取配置）
-                                notifier = TelegramNotifier()
-                                
-                                # 檢查Telegram是否已配置
-                                if notifier.is_configured():
-                                    # 測試連線
-                                    if notifier.test_connection():
+                                if not chart_data.empty:
+                                    logger.info(f"📊 使用 {len(chart_data)} 筆資料生成圖表")
+                                    
+                                    # 生成所有圖表
+                                    chart_paths = chart_generator.generate_all_charts(chart_data)
+                                    
+                                    if chart_paths:
+                                        logger.info(f"📊 已生成 {len(chart_paths)} 個圖表")
+                                        
+                                        # 生成摘要文字
+                                        summary_text = chart_generator.generate_summary_text(chart_data)
+                                        
                                         # 發送圖表報告
                                         success = notifier.send_chart_report(chart_paths, summary_text)
                                         
                                         if success:
-                                            logger.info("📱 圖表已成功發送到Telegram")
+                                            logger.info("📱 圖表報告已成功發送到Telegram")
                                         else:
-                                            logger.warning("⚠️ Telegram發送部分失敗")
+                                            logger.warning("⚠️ Telegram圖表報告發送部分失敗")
                                     else:
-                                        logger.error("❌ Telegram連線失敗，無法發送圖表")
+                                        logger.warning("⚠️ 沒有生成任何圖表")
                                 else:
-                                    logger.info("ℹ️ Telegram未配置，跳過圖表推送功能")
+                                    logger.info("📊 沒有找到足夠的歷史資料生成圖表")
+                            
                             else:
-                                logger.warning("⚠️ 沒有生成任何圖表")
+                                logger.info("ℹ️ 完整資料模式但圖表生成模組未啟用")
                         else:
-                            logger.info("📊 沒有找到足夠的歷史資料生成圖表")
+                            logger.info("ℹ️ Telegram未配置或連線失敗，跳過通知功能")
                     
                     except Exception as e:
-                        logger.error(f"圖表生成或Telegram發送失敗: {e}")
-                        logger.info("資料已正常保存，圖表功能將跳過")
+                        logger.error(f"Telegram通知發送失敗: {e}")
+                        logger.info("資料已正常保存，Telegram通知將跳過")
                 
-                elif not CHART_AVAILABLE:
-                    logger.info("📊 圖表生成模組未啟用，請安裝 matplotlib")
-                elif not TELEGRAM_AVAILABLE:
+                else:
                     logger.info("📱 Telegram通知模組未啟用")
-                elif not db_manager:
-                    logger.info("🗄️ 資料庫未啟用，無法生成30天圖表")
                 
             except Exception as e:
                 logger.error(f"資料庫操作失敗: {e}")
@@ -1156,6 +1187,81 @@ def main():
             logger.error("❌ 指定日期範圍包含交易日但沒有資料，可能網站有問題或資料尚未公布")
             logger.info(f"交易日期: {[d.strftime('%Y/%m/%d %A') for d in business_days_in_range]}")
             return 1  # 回傳錯誤退出碼
+
+
+def generate_trading_summary(df, current_time):
+    """
+    生成交易量資料的文字摘要
+    
+    Args:
+        df: 當日爬取的交易量資料
+        current_time: 當前時間
+        
+    Returns:
+        str: 格式化的摘要文字
+    """
+    if df.empty:
+        return f"📊 台期所交易量摘要 ({current_time.strftime('%Y/%m/%d %H:%M')})\n❌ 今日暫無交易資料"
+    
+    # 計算總計數據
+    total_long_volume = 0
+    total_short_volume = 0
+    total_net_volume = 0
+    
+    contract_summary = []
+    
+    # 按契約統計
+    for contract in df['契約名稱'].unique():
+        contract_data = df[df['契約名稱'] == contract]
+        
+        if not contract_data.empty:
+            long_vol = contract_data['多方交易口數'].sum()
+            short_vol = contract_data['空方交易口數'].sum()
+            net_vol = contract_data['多空淨額交易口數'].sum()
+            
+            total_long_volume += long_vol
+            total_short_volume += short_vol
+            total_net_volume += net_vol
+            
+            # 契約名稱映射
+            contract_name = CONTRACT_NAMES.get(contract, contract)
+            
+            # 判斷多空傾向
+            if net_vol > 0:
+                tendency = "📈 偏多"
+            elif net_vol < 0:
+                tendency = "📉 偏空"
+            else:
+                tendency = "⚖️ 持平"
+            
+            contract_summary.append(
+                f"• {contract_name}({contract}): 多{long_vol:,} 空{short_vol:,} 淨{net_vol:+,} {tendency}"
+            )
+    
+    # 生成摘要文字
+    summary_lines = [
+        f"📊 台期所交易量摘要 ({current_time.strftime('%Y/%m/%d %H:%M')})",
+        f"⏰ 資料時間: {current_time.strftime('%H:%M')} (交易量階段)",
+        "",
+        "📈 今日三大法人交易概況:",
+    ]
+    
+    # 添加各契約摘要
+    summary_lines.extend(contract_summary)
+    
+    # 添加總計
+    summary_lines.extend([
+        "",
+        f"📊 總計統計:",
+        f"• 多方總量: {total_long_volume:,} 口",
+        f"• 空方總量: {total_short_volume:,} 口", 
+        f"• 淨額總量: {total_net_volume:+,} 口",
+        "",
+        f"💡 提示: 這是交易量初步資料",
+        f"🕒 完整未平倉資料將於15:30更新"
+    ])
+    
+    return "\n".join(summary_lines)
 
 
 def prepare_data_for_db(df):
@@ -1240,57 +1346,6 @@ def prepare_data_for_db(df):
             db_records.append(record)
     
     return pd.DataFrame(db_records)
-
-
-def convert_db_data_for_charts(db_df):
-    """將資料庫格式的資料轉換為圖表生成器需要的格式"""
-    if db_df.empty:
-        return pd.DataFrame()
-    
-    logger.info("🔧 轉換資料庫格式為圖表格式...")
-    
-    # 創建圖表資料
-    chart_records = []
-    
-    # 按日期和契約分組處理
-    for (date, contract), group in db_df.groupby(['date', 'contract_code']):
-        # 計算淨部位
-        net_trade = group[group['position_type'] == '淨部位']['net_position'].sum()
-        
-        # 如果沒有淨部位資料，計算多方-空方
-        if net_trade == 0:
-            long_total = group['long_position'].sum()
-            short_total = group['short_position'].sum()
-            net_trade = long_total - short_total
-        
-        # 模擬未平倉資料（如果沒有實際資料）
-        net_position = net_trade * 1.2  # 假設未平倉是交易量的1.2倍
-        
-        # 創建圖表記錄
-        chart_record = {
-            '日期': pd.to_datetime(date),
-            '契約名稱': str(contract).upper(),
-            '身份別': '總計',
-            '多空淨額交易口數': float(net_trade),
-            '多空淨額未平倉口數': float(net_position)
-        }
-        
-        chart_records.append(chart_record)
-    
-    if not chart_records:
-        logger.warning("⚠️ 無法轉換任何資料庫記錄為圖表格式")
-        return pd.DataFrame()
-    
-    result_df = pd.DataFrame(chart_records)
-    
-    # 按日期排序
-    result_df = result_df.sort_values('日期')
-    
-    logger.info(f"✅ 成功轉換 {len(result_df)} 筆資料庫記錄為圖表格式")
-    logger.info(f"📅 日期範圍: {result_df['日期'].min()} 到 {result_df['日期'].max()}")
-    logger.info(f"📈 契約: {result_df['契約名稱'].unique().tolist()}")
-    
-    return result_df
 
 
 if __name__ == "__main__":

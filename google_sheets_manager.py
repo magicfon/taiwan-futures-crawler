@@ -181,7 +181,8 @@ class GoogleSheetsManager:
         try:
             # 建立主要工作表
             worksheets_config = [
-                {"name": "歷史資料", "headers": self.get_history_headers()},
+                {"name": "交易量資料", "headers": self.get_trading_headers()},
+                {"name": "完整資料", "headers": self.get_complete_headers()},
                 {"name": "每日摘要", "headers": self.get_summary_headers()},
                 {"name": "三大法人趨勢", "headers": self.get_trend_headers()},
                 {"name": "系統資訊", "headers": ["項目", "數值", "更新時間"]}
@@ -222,13 +223,32 @@ class GoogleSheetsManager:
             self.logger.error(f"設定工作表失敗: {e}")
     
     def get_history_headers(self):
-        """取得歷史資料表標題"""
+        """取得歷史資料表頭"""
         return [
             "日期", "契約名稱", "身份別", 
             "多方交易口數", "多方契約金額", "空方交易口數", "空方契約金額",
             "多空淨額交易口數", "多空淨額契約金額",
             "多方未平倉口數", "多方未平倉契約金額", "空方未平倉口數", "空方未平倉契約金額",
-            "多空淨額未平倉口數", "多空淨額未平倉契約金額", "更新時間"
+            "多空淨額未平倉口數", "多空淨額未平倉契約金額"
+        ]
+    
+    def get_trading_headers(self):
+        """取得交易量資料表頭（下午2點資料）"""
+        return [
+            "日期", "契約名稱", "身份別", 
+            "多方交易口數", "多方契約金額", 
+            "空方交易口數", "空方契約金額",
+            "多空淨額交易口數", "多空淨額契約金額"
+        ]
+    
+    def get_complete_headers(self):
+        """取得完整資料表頭（下午3點半資料）"""
+        return [
+            "日期", "契約名稱", "身份別", 
+            "多方交易口數", "多方契約金額", "空方交易口數", "空方契約金額",
+            "多空淨額交易口數", "多空淨額契約金額",
+            "多方未平倉口數", "多方未平倉契約金額", "空方未平倉口數", "空方未平倉契約金額",
+            "多空淨額未平倉口數", "多空淨額未平倉契約金額"
         ]
     
     def get_summary_headers(self):
@@ -245,69 +265,93 @@ class GoogleSheetsManager:
             "外資7日平均", "自營商7日平均", "投信7日平均"
         ]
     
-    def upload_data(self, df, worksheet_name="歷史資料"):
-        """上傳資料到Google Sheets - 保守的資料管理，不清除歷史資料"""
+    def upload_data(self, df, worksheet_name="歷史資料", data_type=None):
+        """
+        上傳資料到Google Sheets
+        
+        Args:
+            df: 要上傳的DataFrame
+            worksheet_name: 工作表名稱（可選）
+            data_type: 資料類型 ('TRADING', 'COMPLETE')，會自動選擇對應工作表
+        """
         if not self.spreadsheet or df.empty:
             return False
         
         try:
-            worksheet = self.spreadsheet.worksheet(worksheet_name)
+            # 根據資料類型自動選擇工作表
+            if data_type == 'TRADING':
+                worksheet_name = "交易量資料"
+            elif data_type == 'COMPLETE':
+                worksheet_name = "完整資料"
+            elif data_type is None:
+                # 根據DataFrame欄位自動判斷資料類型
+                has_position_fields = any('未平倉' in col for col in df.columns)
+                if has_position_fields:
+                    worksheet_name = "完整資料"
+                else:
+                    worksheet_name = "交易量資料"
             
-            # 檢查現有資料行數
-            existing_data = worksheet.get_all_values()
-            current_rows = len(existing_data)
+            # 獲取或創建工作表
+            try:
+                worksheet = self.spreadsheet.worksheet(worksheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                # 如果工作表不存在，創建它
+                if worksheet_name == "交易量資料":
+                    headers = self.get_trading_headers()
+                elif worksheet_name == "完整資料":
+                    headers = self.get_complete_headers()
+                else:
+                    headers = self.get_history_headers()
+                
+                worksheet = self.spreadsheet.add_worksheet(
+                    title=worksheet_name,
+                    rows=1000,
+                    cols=len(headers)
+                )
+                worksheet.append_row(headers)
             
-            # 如果接近Google Sheets的10,000行限制，給出警告但不自動清理
-            if current_rows > 9000:
-                self.logger.warning(f"⚠️ Google Sheets行數接近限制 ({current_rows} 行)")
-                self.logger.warning("建議手動整理資料或建立新的工作表")
-                # 不自動清理，讓用戶決定如何處理
+            # 準備資料
+            upload_df = df.copy()
+            upload_df['更新時間'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # 找到最後一行位置並追加新資料
-            last_row = current_rows
+            # 確保欄位順序正確
+            if worksheet_name == "交易量資料":
+                expected_columns = self.get_trading_headers()
+            elif worksheet_name == "完整資料":
+                expected_columns = self.get_complete_headers()
+            else:
+                expected_columns = self.get_history_headers()
             
-            # 準備新資料（適應原始爬蟲資料格式）
-            data_to_upload = []
-            for _, row in df.iterrows():
-                data_row = [
-                    row.get('日期', ''),
-                    row.get('契約名稱', ''),
-                    row.get('身份別', ''),
-                    row.get('多方交易口數', 0),
-                    row.get('多方契約金額', 0),
-                    row.get('空方交易口數', 0),
-                    row.get('空方契約金額', 0),
-                    row.get('多空淨額交易口數', 0),
-                    row.get('多空淨額契約金額', 0),
-                    row.get('多方未平倉口數', 0),
-                    row.get('多方未平倉契約金額', 0),
-                    row.get('空方未平倉口數', 0),
-                    row.get('空方未平倉契約金額', 0),
-                    row.get('多空淨額未平倉口數', 0),
-                    row.get('多空淨額未平倉契約金額', 0),
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                ]
-                data_to_upload.append(data_row)
+            # 重新排列欄位並填充缺失欄位
+            for col in expected_columns:
+                if col not in upload_df.columns:
+                    upload_df[col] = ""
             
-            # 追加新資料到最後一行之後
+            upload_df = upload_df[expected_columns + ['更新時間']]
+            
+            # 轉換為列表格式
+            data_to_upload = upload_df.values.tolist()
+            
+            # 批量上傳資料
             if data_to_upload:
-                try:
-                    start_cell = f'A{last_row + 1}'
-                    worksheet.update(start_cell, data_to_upload)
-                    self.logger.info(f"成功追加 {len(data_to_upload)} 筆資料到 {worksheet_name}")
-                except Exception as upload_error:
-                    if "exceeds grid limits" in str(upload_error):
-                        self.logger.error("❌ Google Sheets已達行數限制，無法新增更多資料")
-                        self.logger.info("💡 建議：手動清理舊資料或建立新的工作表")
-                        return False
-                    else:
-                        raise upload_error
-            
-            return True
+                worksheet.append_rows(data_to_upload)
+                self.logger.info(f"成功上傳 {len(data_to_upload)} 筆資料到 {worksheet_name}")
+                
+                # 格式化工作表
+                self._format_worksheet(worksheet)
+                
+                return True
             
         except Exception as e:
             self.logger.error(f"上傳資料到 {worksheet_name} 失敗: {e}")
             return False
+        
+        return False
+    
+    def _format_worksheet(self, worksheet):
+        """格式化工作表"""
+        # 這裡可以添加格式化工作表的邏輯
+        pass
     
     def get_recent_data_for_report(self, days=30):
         """從Google Sheets取得最近N天的資料用於派報"""

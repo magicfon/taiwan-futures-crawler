@@ -100,10 +100,15 @@ class TaifexDatabaseManager:
         for date in df['date'].unique():
             day_data = df[df['date'] == date]
             
-            # 計算三大法人淨部位
-            foreign_net = day_data[day_data['identity_type'] == '外資']['net_position'].sum()
-            dealer_net = day_data[day_data['identity_type'] == '自營商']['net_position'].sum()
-            trust_net = day_data[day_data['identity_type'] == '投信']['net_position'].sum()
+            # 計算三大法人淨部位（使用新的欄位名稱）
+            foreign_net = day_data[day_data['identity_type'] == '外資']['net_trade_volume'].sum() if 'net_trade_volume' in df.columns else 0
+            dealer_net = day_data[day_data['identity_type'] == '自營商']['net_trade_volume'].sum() if 'net_trade_volume' in df.columns else 0
+            trust_net = day_data[day_data['identity_type'] == '投信']['net_trade_volume'].sum() if 'net_trade_volume' in df.columns else 0
+            
+            # 計算總交易量（使用新的欄位名稱）
+            total_volume = 0
+            if 'long_trade_volume' in df.columns and 'short_trade_volume' in df.columns:
+                total_volume = day_data['long_trade_volume'].sum() + day_data['short_trade_volume'].sum()
             
             cursor.execute('''
                 INSERT OR REPLACE INTO daily_summary 
@@ -112,7 +117,7 @@ class TaifexDatabaseManager:
             ''', (
                 date,
                 len(day_data['contract_code'].unique()),
-                day_data['long_position'].sum() + day_data['short_position'].sum(),
+                total_volume,
                 foreign_net,
                 dealer_net,
                 trust_net
@@ -200,13 +205,13 @@ class TaifexDatabaseManager:
         """匯出三大法人趨勢分析"""
         conn = sqlite3.connect(self.db_path)
         
-        # 三大法人每日淨部位趨勢
+        # 三大法人每日淨部位趨勢（使用新的欄位名稱）
         query = '''
             SELECT 
                 date,
-                SUM(CASE WHEN identity_type = '外資' THEN net_position ELSE 0 END) as 外資淨部位,
-                SUM(CASE WHEN identity_type = '自營商' THEN net_position ELSE 0 END) as 自營商淨部位,
-                SUM(CASE WHEN identity_type = '投信' THEN net_position ELSE 0 END) as 投信淨部位
+                SUM(CASE WHEN identity_type = '外資' THEN net_trade_volume ELSE 0 END) as 外資淨部位,
+                SUM(CASE WHEN identity_type = '自營商' THEN net_trade_volume ELSE 0 END) as 自營商淨部位,
+                SUM(CASE WHEN identity_type = '投信' THEN net_trade_volume ELSE 0 END) as 投信淨部位
             FROM futures_data
             WHERE date >= date('now', '-{} days')
             GROUP BY date
@@ -237,6 +242,74 @@ class TaifexDatabaseManager:
         
         conn.close()
         self.logger.info(f"資料備份完成：{backup_path}")
+
+    def create_correct_table_structure(self):
+        """創建正確的資料庫結構，支援完整的多方空方資料"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 備份現有資料
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS futures_data_backup AS 
+            SELECT * FROM futures_data WHERE 1=0
+        """)
+        
+        # 檢查是否已經是正確的結構
+        cursor.execute("PRAGMA table_info(futures_data)")
+        columns = {row[1]: row[2] for row in cursor.fetchall()}
+        
+        # 如果包含position_type，說明是舊結構，需要更新
+        if 'position_type' in columns:
+            self.logger.info("檢測到舊資料庫結構，開始升級...")
+            
+            # 刪除舊索引
+            try:
+                cursor.execute("DROP INDEX IF EXISTS idx_date")
+                cursor.execute("DROP INDEX IF EXISTS idx_contract")
+                cursor.execute("DROP INDEX IF EXISTS idx_identity")
+            except:
+                pass
+            
+            # 重命名舊表
+            cursor.execute("ALTER TABLE futures_data RENAME TO futures_data_old")
+            
+            # 創建新的正確結構
+            cursor.execute("""
+                CREATE TABLE futures_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    contract_code TEXT NOT NULL,
+                    identity_type TEXT NOT NULL,
+                    long_trade_volume INTEGER DEFAULT 0,
+                    long_trade_amount INTEGER DEFAULT 0,
+                    short_trade_volume INTEGER DEFAULT 0,
+                    short_trade_amount INTEGER DEFAULT 0,
+                    net_trade_volume INTEGER DEFAULT 0,
+                    net_trade_amount INTEGER DEFAULT 0,
+                    long_open_volume INTEGER DEFAULT 0,
+                    long_open_amount INTEGER DEFAULT 0,
+                    short_open_volume INTEGER DEFAULT 0,
+                    short_open_amount INTEGER DEFAULT 0,
+                    net_open_volume INTEGER DEFAULT 0,
+                    net_open_amount INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(date, contract_code, identity_type)
+                )
+            """)
+            
+            # 創建索引
+            cursor.execute("CREATE INDEX idx_date ON futures_data(date)")
+            cursor.execute("CREATE INDEX idx_contract ON futures_data(contract_code)")  
+            cursor.execute("CREATE INDEX idx_identity ON futures_data(identity_type)")
+            
+            self.logger.info("✅ 資料庫結構升級完成")
+            
+        else:
+            self.logger.info("資料庫結構已是正確格式")
+        
+        conn.commit()
+        conn.close()
 
 
 class CloudDatabaseManager:

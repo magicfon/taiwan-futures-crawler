@@ -1,0 +1,68 @@
+name: 🚀 台期所交易量資料爬取
+
+on:
+  schedule:
+    # 台灣時間下午2點 = UTC時間上午6點 (UTC+8)
+    - cron: '0 6 * * 1-5'  # 週一到週五 UTC 06:00 (台灣時間 14:00)
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  crawl-trading-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔄 檢出程式碼
+      uses: actions/checkout@v4
+    
+    - name: 🐍 設定Python環境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+    
+    - name: 📦 安裝相依套件
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🕐 顯示當前時間
+      run: |
+        echo "UTC時間: $(date -u)"
+        echo "台灣時間: $(TZ='Asia/Taipei' date)"
+    
+    - name: 📊 爬取交易量資料
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python taifex_crawler.py \
+          --date-range today \
+          --contracts TX,TE,MTX \
+          --identities ALL \
+          --data_type TRADING \
+          --max_workers 5 \
+          --delay 1.0
+    
+    - name: 📁 上傳爬取結果
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: trading-data-results
+        path: |
+          output/*.csv
+          output/*.xlsx
+          *.log
+        retention-days: 30
+    
+    - name: 💬 發送通知 (成功)
+      if: success()
+      run: |
+        echo "✅ 交易量資料爬取成功 - $(TZ='Asia/Taipei' date)"
+        echo "📊 資料已上傳到Google Sheets的「交易量資料」分頁"
+    
+    - name: 💬 發送通知 (失敗)
+      if: failure()
+      run: |
+        echo "❌ 交易量資料爬取失敗 - $(TZ='Asia/Taipei' date)"
+        echo "請檢查日誌了解詳細錯誤信息" 

@@ -12,9 +12,13 @@ on:
         required: false
         default: 'today'
       contracts:
-        description: '契約代碼 (用逗號分隔，如: TX,TE,MTX)'
+        description: '契約代碼 (用逗號分隔，如: TX,TE,MTX,ZMX,NQF)'
         required: false
         default: 'TX,TE,MTX,ZMX,NQF'
+      identities:
+        description: '身份別 (用空格分隔，如: 自營商 投信 外資)'
+        required: false
+        default: '自營商 投信 外資'
       retry_if_empty:
         description: '如果沒有資料是否重試'
         required: false
@@ -123,10 +127,10 @@ jobs:
         
         if [ "${{ github.event.inputs.date_range }}" = "today" ] || [ -z "${{ github.event.inputs.date_range }}" ]; then
           # 執行今日資料爬取
-          python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+          python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX,ZMX,NQF' }} --identities ${{ github.event.inputs.identities || '自營商 投信 外資' }}
         else
           # 執行指定日期範圍爬取
-          python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+          python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX,ZMX,NQF' }} --identities ${{ github.event.inputs.identities || '自營商 投信 外資' }}
         fi
         
         # 檢查是否有產生輸出檔案
@@ -152,10 +156,10 @@ jobs:
         
         if [ "${{ github.event.inputs.date_range }}" = "today" ] || [ -z "${{ github.event.inputs.date_range }}" ]; then
           # 執行今日資料爬取
-          python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+          python taifex_crawler.py --date-range today --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX,ZMX,NQF' }} --identities ${{ github.event.inputs.identities || '自營商 投信 外資' }}
         else
           # 執行指定日期範圍爬取
-          python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX' }}
+          python taifex_crawler.py --date-range "${{ github.event.inputs.date_range }}" --contracts ${{ github.event.inputs.contracts || 'TX,TE,MTX,ZMX,NQF' }} --identities ${{ github.event.inputs.identities || '自營商 投信 外資' }}
         fi
         
         # 檢查是否有產生輸出檔案
