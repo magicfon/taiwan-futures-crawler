@@ -995,6 +995,10 @@ def main():
         logger.info(f"CSV 檔案: {csv_path}")
         logger.info(f"Excel 檔案: {excel_path}")
         
+        # 用於儲存資料庫相關資料
+        recent_data = pd.DataFrame()
+        summary_data = pd.DataFrame()
+        
         # 2. 保存到資料庫（如果可用）
         if db_manager and not df.empty:
             try:
@@ -1015,159 +1019,157 @@ def main():
                 db_manager.export_to_excel(latest_30d_path, days=30)
                 logger.info(f"最新30天資料已匯出: {latest_30d_path}")
                 
-                # 3. 上傳到Google Sheets（如果可用）
-                if sheets_manager:
-                    try:
-                        # 連接或建立試算表
-                        spreadsheet_config_file = Path("config/spreadsheet_config.json")
-                        
-                        if spreadsheet_config_file.exists():
-                            # 載入現有試算表配置
-                            with open(spreadsheet_config_file, 'r', encoding='utf-8') as f:
-                                config = json.load(f)
-                                spreadsheet_id = config.get('spreadsheet_id')
-                                
-                                if spreadsheet_id:
-                                    sheets_manager.connect_spreadsheet(spreadsheet_id)
-                                    logger.info("已連接到現有的Google試算表")
-                        
-                        if not sheets_manager.spreadsheet:
-                            # 建立新試算表
-                            spreadsheet = sheets_manager.create_spreadsheet("台期所資料分析")
-                            if spreadsheet:
-                                # 儲存試算表配置
-                                config = {
-                                    'spreadsheet_id': spreadsheet.id,
-                                    'spreadsheet_url': sheets_manager.get_spreadsheet_url(),
-                                    'created_at': datetime.datetime.now(TW_TZ).isoformat()
-                                }
-                                
-                                spreadsheet_config_file.parent.mkdir(exist_ok=True)
-                                with open(spreadsheet_config_file, 'w', encoding='utf-8') as f:
-                                    json.dump(config, f, indent=2, ensure_ascii=False)
-                                
-                                # 設定為公開可檢視
-                                sheets_manager.share_spreadsheet()
-                                
-                                logger.info(f"🎉 Google試算表已建立: {sheets_manager.get_spreadsheet_url()}")
-                                logger.info("📱 現在可以在任何裝置上存取台期所資料了！")
-                        
-                        if sheets_manager.spreadsheet:
-                            # 上傳資料到Google Sheets
-                            recent_data = db_manager.get_recent_data(30)
-                            summary_data = db_manager.get_daily_summary(30)
-                            
-                            # 上傳主要資料 - 根據爬取的資料類型選擇工作表
-                            if not recent_data.empty:
-                                sheets_manager.upload_data(recent_data, data_type=args.data_type)
-                                logger.info(f"✅ {DATA_TYPES.get(args.data_type, args.data_type)}已上傳到Google Sheets")
-                            
-                            # 如果有當前爬取的資料，也上傳它
-                            if not df.empty:
-                                sheets_manager.upload_data(df, data_type=args.data_type)
-                                logger.info(f"✅ 當前爬取的{DATA_TYPES.get(args.data_type, args.data_type)}已上傳到Google Sheets")
-                            
-                            # 上傳摘要資料
-                            if not summary_data.empty:
-                                sheets_manager.upload_summary(summary_data)
-                                sheets_manager.update_trend_analysis(summary_data)
-                                logger.info("✅ 摘要和趨勢分析已更新")
-                            
-                            # 更新系統資訊
-                            sheets_manager.update_system_info()
-                            
-                            logger.info(f"🌐 Google試算表網址: {sheets_manager.get_spreadsheet_url()}")
-                            if args.data_type == 'TRADING':
-                                logger.info("💡 提示: 下午2點的交易量資料已上傳到「交易量資料」分頁")
-                                logger.info("💡 請在下午3點半後再次執行程式爬取完整資料")
-                            else:
-                                logger.info("💡 提示: 完整資料已上傳到「完整資料」分頁，包含交易量和未平倉資料")
-                    
-                    except Exception as e:
-                        logger.error(f"Google Sheets上傳失敗: {e}")
-                        logger.info("本地資料已正常保存，可稍後手動上傳")
-                
-                # 4. Telegram通知處理
-                if TELEGRAM_AVAILABLE:
-                    try:
-                        # 初始化Telegram通知器
-                        notifier = TelegramNotifier()
-                        
-                        if notifier.is_configured() and notifier.test_connection():
-                            if args.data_type == 'TRADING':
-                                # 交易量資料：發送簡單文字摘要
-                                logger.info("📱 發送交易量資料摘要到Telegram...")
-                                summary_text = generate_trading_summary(df, datetime.datetime.now(TW_TZ))
-                                success = notifier.send_simple_message(summary_text)
-                                
-                                if success:
-                                    logger.info("📱 交易量摘要已發送到Telegram")
-                                else:
-                                    logger.warning("⚠️ Telegram交易量摘要發送失敗")
-                            
-                            elif args.data_type == 'COMPLETE' and CHART_AVAILABLE:
-                                # 完整資料：生成圖表並發送報告
-                                logger.info("🎨 開始生成圖表並發送到Telegram...")
-                                
-                                # 初始化圖表生成器
-                                chart_generator = ChartGenerator(output_dir="charts")
-                                
-                                # 優先從Google Sheets獲取30天歷史資料
-                                chart_data = None
-                                if sheets_manager and sheets_manager.spreadsheet:
-                                    logger.info("📊 從Google Sheets載入歷史資料...")
-                                    chart_data = chart_generator.load_data_from_google_sheets(30)
-                                
-                                # 如果Google Sheets沒有資料，則從資料庫獲取
-                                if chart_data is None or chart_data.empty:
-                                    if db_manager:
-                                        logger.info("📊 從資料庫載入歷史資料...")
-                                        chart_data = db_manager.get_recent_data(30)
-                                    else:
-                                        # 最後嘗試從當前爬取的資料
-                                        chart_data = df
-                                
-                                if not chart_data.empty:
-                                    logger.info(f"📊 使用 {len(chart_data)} 筆資料生成圖表")
-                                    
-                                    # 生成所有圖表
-                                    chart_paths = chart_generator.generate_all_charts(chart_data)
-                                    
-                                    if chart_paths:
-                                        logger.info(f"📊 已生成 {len(chart_paths)} 個圖表")
-                                        
-                                        # 生成摘要文字
-                                        summary_text = chart_generator.generate_summary_text(chart_data)
-                                        
-                                        # 發送圖表報告
-                                        success = notifier.send_chart_report(chart_paths, summary_text)
-                                        
-                                        if success:
-                                            logger.info("📱 圖表報告已成功發送到Telegram")
-                                        else:
-                                            logger.warning("⚠️ Telegram圖表報告發送部分失敗")
-                                    else:
-                                        logger.warning("⚠️ 沒有生成任何圖表")
-                                else:
-                                    logger.info("📊 沒有找到足夠的歷史資料生成圖表")
-                            
-                            else:
-                                logger.info("ℹ️ 完整資料模式但圖表生成模組未啟用")
-                        else:
-                            logger.info("ℹ️ Telegram未配置或連線失敗，跳過通知功能")
-                    
-                    except Exception as e:
-                        logger.error(f"Telegram通知發送失敗: {e}")
-                        logger.info("資料已正常保存，Telegram通知將跳過")
-                
-                else:
-                    logger.info("📱 Telegram通知模組未啟用")
+                # 取得摘要資料
+                summary_data = db_manager.get_daily_summary(30)
                 
             except Exception as e:
                 logger.error(f"資料庫操作失敗: {e}")
+                logger.info("繼續執行 Google Sheets 上傳...")
         
-        # 儲存完整報告
-        # 移除未定義的report_data
+        # 3. 上傳到Google Sheets（無論資料庫是否成功都要執行）
+        if sheets_manager:
+            try:
+                # 連接或建立試算表
+                spreadsheet_config_file = Path("config/spreadsheet_config.json")
+                
+                if spreadsheet_config_file.exists():
+                    # 載入現有試算表配置
+                    with open(spreadsheet_config_file, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                        spreadsheet_id = config.get('spreadsheet_id')
+                        
+                        if spreadsheet_id:
+                            sheets_manager.connect_spreadsheet(spreadsheet_id)
+                            logger.info("已連接到現有的Google試算表")
+                
+                if not sheets_manager.spreadsheet:
+                    # 建立新試算表
+                    spreadsheet = sheets_manager.create_spreadsheet("台期所資料分析")
+                    if spreadsheet:
+                        # 儲存試算表配置
+                        config = {
+                            'spreadsheet_id': spreadsheet.id,
+                            'spreadsheet_url': sheets_manager.get_spreadsheet_url(),
+                            'created_at': datetime.datetime.now(TW_TZ).isoformat()
+                        }
+                        
+                        spreadsheet_config_file.parent.mkdir(exist_ok=True)
+                        with open(spreadsheet_config_file, 'w', encoding='utf-8') as f:
+                            json.dump(config, f, indent=2, ensure_ascii=False)
+                        
+                        # 設定為公開可檢視
+                        sheets_manager.share_spreadsheet()
+                        
+                        logger.info(f"🎉 Google試算表已建立: {sheets_manager.get_spreadsheet_url()}")
+                        logger.info("📱 現在可以在任何裝置上存取台期所資料了！")
+                
+                if sheets_manager.spreadsheet:
+                    # 上傳資料到Google Sheets
+                    # 上傳主要資料 - 根據爬取的資料類型選擇工作表
+                    if not recent_data.empty:
+                        sheets_manager.upload_data(recent_data, data_type=args.data_type)
+                        logger.info(f"✅ {DATA_TYPES.get(args.data_type, args.data_type)}已上傳到Google Sheets")
+                    
+                    # 如果有當前爬取的資料，也上傳它
+                    if not df.empty:
+                        sheets_manager.upload_data(df, data_type=args.data_type)
+                        logger.info(f"✅ 當前爬取的{DATA_TYPES.get(args.data_type, args.data_type)}已上傳到Google Sheets")
+                    
+                    # 上傳摘要資料
+                    if not summary_data.empty:
+                        sheets_manager.upload_summary(summary_data)
+                        sheets_manager.update_trend_analysis(summary_data)
+                        logger.info("✅ 摘要和趨勢分析已更新")
+                    
+                    # 更新系統資訊
+                    sheets_manager.update_system_info()
+                    
+                    logger.info(f"🌐 Google試算表網址: {sheets_manager.get_spreadsheet_url()}")
+                    if args.data_type == 'TRADING':
+                        logger.info("💡 提示: 下午2點的交易量資料已上傳到「交易量資料」分頁")
+                        logger.info("💡 請在下午3點半後再次執行程式爬取完整資料")
+                    else:
+                        logger.info("💡 提示: 完整資料已上傳到「完整資料」分頁，包含交易量和未平倉資料")
+            
+            except Exception as e:
+                logger.error(f"Google Sheets上傳失敗: {e}")
+                logger.info("本地資料已正常保存，可稍後手動上傳")
+        
+        # 4. Telegram通知處理
+        if TELEGRAM_AVAILABLE:
+            try:
+                # 初始化Telegram通知器
+                notifier = TelegramNotifier()
+                
+                if notifier.is_configured() and notifier.test_connection():
+                    if args.data_type == 'TRADING':
+                        # 交易量資料：發送簡單文字摘要
+                        logger.info("📱 發送交易量資料摘要到Telegram...")
+                        summary_text = generate_trading_summary(df, datetime.datetime.now(TW_TZ))
+                        success = notifier.send_simple_message(summary_text)
+                        
+                        if success:
+                            logger.info("📱 交易量摘要已發送到Telegram")
+                        else:
+                            logger.warning("⚠️ Telegram交易量摘要發送失敗")
+                    
+                    elif args.data_type == 'COMPLETE' and CHART_AVAILABLE:
+                        # 完整資料：生成圖表並發送報告
+                        logger.info("🎨 開始生成圖表並發送到Telegram...")
+                        
+                        # 初始化圖表生成器
+                        chart_generator = ChartGenerator(output_dir="charts")
+                        
+                        # 優先從Google Sheets獲取30天歷史資料
+                        chart_data = None
+                        if sheets_manager and sheets_manager.spreadsheet:
+                            logger.info("📊 從Google Sheets載入歷史資料...")
+                            chart_data = chart_generator.load_data_from_google_sheets(30)
+                        
+                        # 如果Google Sheets沒有資料，則從資料庫獲取
+                        if chart_data is None or chart_data.empty:
+                            if db_manager:
+                                logger.info("📊 從資料庫載入歷史資料...")
+                                chart_data = db_manager.get_recent_data(30)
+                            else:
+                                # 最後嘗試從當前爬取的資料
+                                chart_data = df
+                        
+                        if not chart_data.empty:
+                            logger.info(f"📊 使用 {len(chart_data)} 筆資料生成圖表")
+                            
+                            # 生成所有圖表
+                            chart_paths = chart_generator.generate_all_charts(chart_data)
+                            
+                            if chart_paths:
+                                logger.info(f"📊 已生成 {len(chart_paths)} 個圖表")
+                                
+                                # 生成摘要文字
+                                summary_text = chart_generator.generate_summary_text(chart_data)
+                                
+                                # 發送圖表報告
+                                success = notifier.send_chart_report(chart_paths, summary_text)
+                                
+                                if success:
+                                    logger.info("📱 圖表報告已成功發送到Telegram")
+                                else:
+                                    logger.warning("⚠️ Telegram圖表報告發送部分失敗")
+                            else:
+                                logger.warning("⚠️ 沒有生成任何圖表")
+                        else:
+                            logger.info("📊 沒有找到足夠的歷史資料生成圖表")
+                    
+                    else:
+                        logger.info("ℹ️ 完整資料模式但圖表生成模組未啟用")
+                else:
+                    logger.info("ℹ️ Telegram未配置或連線失敗，跳過通知功能")
+            
+            except Exception as e:
+                logger.error(f"Telegram通知發送失敗: {e}")
+                logger.info("資料已正常保存，Telegram通知將跳過")
+        
+        else:
+            logger.info("�� Telegram通知模組未啟用")
         
         logger.info("程式執行完成")
         return 0  # 成功退出
@@ -1269,81 +1271,35 @@ def prepare_data_for_db(df):
     if df.empty:
         return pd.DataFrame()
     
-    # 資料庫需要的欄位
-    required_columns = [
-        'date', 'contract_code', 'identity_type', 'position_type',
-        'long_position', 'short_position', 'net_position'
-    ]
-    
+    # 簡化的資料庫記錄格式，避免複雜的position_type結構
     db_records = []
     
     for _, row in df.iterrows():
-        base_record = {
+        # 直接保存原始資料到資料庫
+        record = {
             'date': row.get('日期', ''),
             'contract_code': row.get('契約名稱', ''),
+            'identity_type': row.get('身份別', '總計'),
+            'long_trade_volume': row.get('多方交易口數', 0),
+            'short_trade_volume': row.get('空方交易口數', 0),
+            'net_trade_volume': row.get('多空淨額交易口數', 0),
+            'long_trade_amount': row.get('多方契約金額', 0),
+            'short_trade_amount': row.get('空方契約金額', 0),
+            'net_trade_amount': row.get('多空淨額契約金額', 0),
         }
         
-        # 處理身份別資料
-        if '身份別' in df.columns:
-            base_record['identity_type'] = row.get('身份別', '')
-        else:
-            base_record['identity_type'] = '總計'
-        
-        # 處理多方部位
-        if any(col for col in df.columns if '多方' in col and '口數' in col):
-            long_cols = [col for col in df.columns if '多方' in col and '口數' in col]
-            long_position = sum(row.get(col, 0) for col in long_cols)
-            
-            record_long = base_record.copy()
-            record_long.update({
-                'position_type': '多方',
-                'long_position': long_position,
-                'short_position': 0,
-                'net_position': long_position
+        # 如果是完整資料，也包含未平倉資料
+        if '多方未平倉口數' in df.columns:
+            record.update({
+                'long_position_volume': row.get('多方未平倉口數', 0),
+                'short_position_volume': row.get('空方未平倉口數', 0),
+                'net_position_volume': row.get('多空淨額未平倉口數', 0),
+                'long_position_amount': row.get('多方未平倉契約金額', 0),
+                'short_position_amount': row.get('空方未平倉契約金額', 0),
+                'net_position_amount': row.get('多空淨額未平倉契約金額', 0),
             })
-            db_records.append(record_long)
         
-        # 處理空方部位
-        if any(col for col in df.columns if '空方' in col and '口數' in col):
-            short_cols = [col for col in df.columns if '空方' in col and '口數' in col]
-            short_position = sum(row.get(col, 0) for col in short_cols)
-            
-            record_short = base_record.copy()
-            record_short.update({
-                'position_type': '空方',
-                'long_position': 0,
-                'short_position': short_position,
-                'net_position': -short_position
-            })
-            db_records.append(record_short)
-        
-        # 處理淨部位
-        if any(col for col in df.columns if '淨部位' in col):
-            net_cols = [col for col in df.columns if '淨部位' in col]
-            net_position = sum(row.get(col, 0) for col in net_cols)
-            
-            record_net = base_record.copy()
-            record_net.update({
-                'position_type': '淨部位',
-                'long_position': 0,
-                'short_position': 0,
-                'net_position': net_position
-            })
-            db_records.append(record_net)
-    
-    if not db_records:
-        # 如果沒有識別到標準格式，創建基本記錄
-        for _, row in df.iterrows():
-            record = {
-                'date': row.get('日期', ''),
-                'contract_code': row.get('契約名稱', ''),
-                'identity_type': row.get('身份別', '總計'),
-                'position_type': '未分類',
-                'long_position': 0,
-                'short_position': 0,
-                'net_position': 0
-            }
-            db_records.append(record)
+        db_records.append(record)
     
     return pd.DataFrame(db_records)
 

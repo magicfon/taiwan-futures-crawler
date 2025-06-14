@@ -92,6 +92,10 @@ jobs:
     - name: 檢查並補齊遺漏資料
       id: missing_check
       if: github.event.inputs.skip_missing_check != 'true'
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         echo "🔍 開始檢查近30天遺漏的交易日資料..."
         
@@ -122,6 +126,10 @@ jobs:
         
     - name: 執行爬蟲 (第一次嘗試)
       id: first_attempt
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         echo "🚀 開始第一次爬取嘗試..."
         
@@ -151,6 +159,10 @@ jobs:
     - name: 執行爬蟲 (重試)
       id: retry_attempt
       if: steps.first_attempt.outputs.success == 'false' && (github.event.inputs.retry_if_empty == 'true' || github.event_name == 'schedule')
+      env:
+        GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         echo "🔄 開始重試爬取..."
         
