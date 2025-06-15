@@ -852,6 +852,12 @@ def parse_arguments():
     parser.add_argument('--max_retries', type=int, default=3,
                         help='最大重試次數')
     
+    # 資料完整性檢查參數
+    parser.add_argument('--check_days', type=int, default=10,
+                        help='檢查近期交易日資料完整性的天數 (預設: 10天)')
+    parser.add_argument('--skip_check', action='store_true',
+                        help='跳過近期資料完整性檢查')
+    
     args = parser.parse_args()
     
     # 處理新的日期範圍參數
@@ -942,6 +948,10 @@ def main():
     logger.info(f"契約: {', '.join(args.contracts)}")
     logger.info(f"身份別: {', '.join(args.identities) if args.identities else '不爬取身份別資料'}")
     logger.info(f"資料類型: {DATA_TYPES.get(args.data_type, args.data_type)}")
+    if not args.skip_check:
+        logger.info(f"資料完整性檢查: 近 {args.check_days} 天交易日")
+    else:
+        logger.info("資料完整性檢查: 已跳過")
     
     # 初始化資料庫管理器
     if DB_AVAILABLE:
@@ -963,6 +973,34 @@ def main():
     else:
         sheets_manager = None
     
+    # 檢查並補齊近期交易日的資料
+    missing_dates = []
+    if not args.skip_check:
+        missing_dates = check_and_get_missing_dates(
+            db_manager, sheets_manager, args.contracts, args.identities, 
+            args.data_type, check_days=args.check_days
+        )
+    else:
+        logger.info("⏩ 已跳過近期資料完整性檢查")
+    
+    # 將缺失的日期加入到爬取範圍
+    original_start = args.start_date
+    original_end = args.end_date
+    
+    if missing_dates:
+        logger.info(f"🔍 發現 {len(missing_dates)} 個交易日缺少資料，將一併爬取")
+        for date in missing_dates:
+            logger.info(f"   - {date.strftime('%Y/%m/%d %A')}")
+        
+        # 擴展爬取範圍以包含缺失的日期
+        all_dates = missing_dates + [args.start_date, args.end_date]
+        args.start_date = min(all_dates)
+        args.end_date = max(all_dates)
+        
+        logger.info(f"📅 擴展爬取範圍: {args.start_date.strftime('%Y/%m/%d')} - {args.end_date.strftime('%Y/%m/%d')}")
+    else:
+        logger.info("✅ 近期交易日資料完整，無需補齊")
+    
     # 創建爬蟲實例
     crawler = TaifexCrawler(
         output_dir=args.output_dir,
@@ -982,18 +1020,42 @@ def main():
     
     # 保存資料
     if not df.empty:
+        # 分析爬取結果
+        total_records = len(df)
+        unique_dates = df['日期'].nunique() if '日期' in df.columns else 0
+        
+        # 區分原始請求和補齊的資料
+        original_date_range = pd.date_range(
+            start=original_start.strftime('%Y/%m/%d'),
+            end=original_end.strftime('%Y/%m/%d'),
+            freq='D'
+        )
+        original_business_days = [d for d in original_date_range if d.weekday() < 5]
+        
+        if missing_dates:
+            logger.info(f"📊 爬取完成統計:")
+            logger.info(f"   - 原始請求範圍: {len(original_business_days)} 個交易日")
+            logger.info(f"   - 補齊缺失資料: {len(missing_dates)} 個交易日")
+            logger.info(f"   - 總共爬取: {unique_dates} 個交易日，{total_records} 筆資料")
+        else:
+            logger.info(f"📊 爬取完成: {unique_dates} 個交易日，{total_records} 筆資料")
+        
         # 生成默認檔名
         if not args.filename:
-            date_range = f"{args.start_date.strftime('%Y%m%d')}-{args.end_date.strftime('%Y%m%d')}"
+            if missing_dates:
+                # 如果有補齊資料，檔名反映完整範圍
+                date_range = f"{args.start_date.strftime('%Y%m%d')}-{args.end_date.strftime('%Y%m%d')}_含補齊"
+            else:
+                date_range = f"{original_start.strftime('%Y%m%d')}-{original_end.strftime('%Y%m%d')}"
             contracts_str = '_'.join(args.contracts)
             identity_str = '_'.join(args.identities) if args.identities else 'no_identity'
             args.filename = f"taifex_{date_range}_{contracts_str}_{identity_str}"
         
         # 1. 保存到傳統檔案格式
         csv_path, excel_path = crawler.save_data(df, args.filename)
-        logger.info(f"已成功爬取 {len(df)} 筆資料")
-        logger.info(f"CSV 檔案: {csv_path}")
-        logger.info(f"Excel 檔案: {excel_path}")
+        logger.info(f"💾 檔案已保存:")
+        logger.info(f"   - CSV: {csv_path}")
+        logger.info(f"   - Excel: {excel_path}")
         
         # 用於儲存資料庫相關資料
         recent_data = pd.DataFrame()
@@ -1264,6 +1326,102 @@ def generate_trading_summary(df, current_time):
     ])
     
     return "\n".join(summary_lines)
+
+
+def check_and_get_missing_dates(db_manager, sheets_manager, contracts, identities, data_type, check_days=10):
+    """
+    檢查近期交易日的資料完整性，返回缺失的日期列表
+    
+    Args:
+        db_manager: 資料庫管理器
+        sheets_manager: Google Sheets 管理器
+        contracts: 要檢查的契約列表
+        identities: 要檢查的身份別列表
+        data_type: 資料類型 ('TRADING' 或 'COMPLETE')
+        check_days: 要檢查的天數
+        
+    Returns:
+        list: 缺失資料的日期列表 (datetime objects)
+    """
+    try:
+        # 計算要檢查的日期範圍（近期交易日）
+        today = datetime.datetime.now(TW_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_check_date = today - datetime.timedelta(days=check_days)
+        
+        # 生成所有應該有資料的交易日
+        expected_dates = []
+        current_date = start_check_date
+        while current_date < today:
+            if current_date.weekday() < 5:  # 週一到週五
+                expected_dates.append(current_date)
+            current_date += datetime.timedelta(days=1)
+        
+        if not expected_dates:
+            logger.info("📅 近期沒有交易日需要檢查")
+            return []
+        
+        logger.info(f"🔍 開始檢查近 {check_days} 天內的 {len(expected_dates)} 個交易日資料完整性...")
+        
+        # 優先從資料庫檢查
+        existing_dates_db = set()
+        if db_manager:
+            try:
+                # 從資料庫查詢已存在的日期
+                existing_data = db_manager.get_recent_data(check_days + 5)  # 多查幾天確保完整
+                if not existing_data.empty:
+                    # 轉換日期格式並去重
+                    db_dates = pd.to_datetime(existing_data['date']).dt.date
+                    existing_dates_db = set(db_dates.unique())
+                    logger.info(f"📊 資料庫中找到 {len(existing_dates_db)} 個不同日期的資料")
+            except Exception as e:
+                logger.warning(f"⚠️ 從資料庫檢查資料時發生錯誤: {e}")
+        
+        # 從Google Sheets檢查（如果資料庫沒有足夠資料）
+        existing_dates_sheets = set()
+        if sheets_manager and sheets_manager.spreadsheet and len(existing_dates_db) < len(expected_dates):
+            try:
+                # 根據資料類型選擇工作表
+                worksheet_name = "完整資料" if data_type == 'COMPLETE' else "交易量資料"
+                worksheet = sheets_manager.get_or_create_worksheet(worksheet_name)
+                
+                if worksheet:
+                    # 獲取現有資料
+                    records = worksheet.get_all_records()
+                    if records:
+                        sheets_dates = [
+                            datetime.datetime.strptime(record.get('日期', ''), '%Y/%m/%d').date()
+                            for record in records
+                            if record.get('日期')
+                        ]
+                        existing_dates_sheets = set(sheets_dates)
+                        logger.info(f"📊 Google Sheets中找到 {len(existing_dates_sheets)} 個不同日期的資料")
+            except Exception as e:
+                logger.warning(f"⚠️ 從Google Sheets檢查資料時發生錯誤: {e}")
+        
+        # 合併已存在的日期
+        existing_dates = existing_dates_db.union(existing_dates_sheets)
+        
+        # 找出缺失的日期
+        missing_dates = []
+        for expected_date in expected_dates:
+            expected_date_obj = expected_date.date()
+            
+            if expected_date_obj not in existing_dates:
+                missing_dates.append(expected_date)
+                logger.debug(f"   缺失: {expected_date.strftime('%Y/%m/%d %A')}")
+            else:
+                logger.debug(f"   存在: {expected_date.strftime('%Y/%m/%d %A')}")
+        
+        if missing_dates:
+            logger.info(f"🔍 檢查結果: {len(expected_dates)} 個交易日中有 {len(missing_dates)} 個缺少資料")
+        else:
+            logger.info(f"✅ 檢查結果: 近 {check_days} 天的 {len(expected_dates)} 個交易日資料完整")
+        
+        return missing_dates
+        
+    except Exception as e:
+        logger.error(f"❌ 檢查近期資料時發生錯誤: {e}")
+        return []
 
 
 def prepare_data_for_db(df):
