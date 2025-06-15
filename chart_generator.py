@@ -444,40 +444,49 @@ class ChartGenerator:
                 logger.warning("無法連接到Google試算表")
                 return pd.DataFrame()
             
-            # 從「原始資料」工作表讀取資料
+            # 優先嘗試從「完整資料」工作表讀取（最新資料）
+            worksheet_names = ['完整資料', '歷史資料', '原始資料']
+            
+            for worksheet_name in worksheet_names:
+                try:
+                    worksheet = sheets_manager.spreadsheet.worksheet(worksheet_name)
+                    data = worksheet.get_all_records()
+                    
+                    if not data:
+                        logger.warning(f"工作表「{worksheet_name}」中沒有找到資料")
+                        continue
+                    
+                    df = pd.DataFrame(data)
+                    
+                    # 資料清理和格式轉換
+                    if '日期' in df.columns:
+                        df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
+                        
+                        # 過濾最近N天的資料
+                        end_date = datetime.now()
+                        start_date = end_date - timedelta(days=days)
+                        df = df[(df['日期'] >= start_date) & (df['日期'] <= end_date)]
+                        
+                        # 只保留工作日
+                        df = df[df['日期'].dt.weekday < 5]
+                        
+                        if not df.empty:
+                            logger.info(f"從工作表「{worksheet_name}」載入了 {len(df)} 筆近{days}天資料")
+                            logger.info(f"日期範圍: {df['日期'].min()} 到 {df['日期'].max()}")
+                            return df
+                    
+                except Exception as e:
+                    logger.warning(f"無法從「{worksheet_name}」工作表讀取: {e}")
+                    continue
+            
+            # 如果主要工作表都沒資料，嘗試從其他可能的工作表讀取
+            logger.warning("主要工作表沒有資料，嘗試從其他工作表讀取...")
             try:
-                worksheet = sheets_manager.spreadsheet.worksheet("原始資料")
-                data = worksheet.get_all_records()
-                
-                if not data:
-                    logger.warning("Google Sheets中沒有找到資料")
-                    return pd.DataFrame()
-                
-                df = pd.DataFrame(data)
-                
-                # 資料清理和格式轉換
-                if '日期' in df.columns:
-                    df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
-                    
-                    # 過濾最近N天的資料
-                    end_date = datetime.now()
-                    start_date = end_date - timedelta(days=days)
-                    df = df[(df['日期'] >= start_date) & (df['日期'] <= end_date)]
-                    
-                    # 只保留工作日
-                    df = df[df['日期'].dt.weekday < 5]
-                    
-                    logger.info(f"從Google Sheets載入了 {len(df)} 筆近{days}天資料")
-                    logger.info(f"日期範圍: {df['日期'].min()} 到 {df['日期'].max()}")
-                    
-                    return df
-                
-            except Exception as e:
-                logger.warning(f"無法從「原始資料」工作表讀取: {e}")
-                
-                # 嘗試從其他可能的工作表讀取
                 worksheets = sheets_manager.spreadsheet.worksheets()
                 for ws in worksheets:
+                    if ws.title in worksheet_names:
+                        continue  # 已經嘗試過了
+                        
                     if '資料' in ws.title or 'data' in ws.title.lower():
                         try:
                             data = ws.get_all_records()
@@ -490,10 +499,14 @@ class ChartGenerator:
                                     df = df[(df['日期'] >= start_date) & (df['日期'] <= end_date)]
                                     df = df[df['日期'].dt.weekday < 5]
                                     
-                                    logger.info(f"從工作表「{ws.title}」載入了 {len(df)} 筆資料")
-                                    return df
-                        except:
+                                    if not df.empty:
+                                        logger.info(f"從工作表「{ws.title}」載入了 {len(df)} 筆資料")
+                                        return df
+                        except Exception as e:
+                            logger.warning(f"從工作表「{ws.title}」讀取失敗: {e}")
                             continue
+            except Exception as e:
+                logger.warning(f"遍歷工作表時發生錯誤: {e}")
             
             logger.warning("無法從Google Sheets載入有效資料")
             return pd.DataFrame()
