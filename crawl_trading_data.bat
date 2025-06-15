@@ -5,7 +5,7 @@ echo ===========================================
 echo 正在爬取今日交易量資料...
 echo.
 
-python taifex_crawler.py --date-range today --contracts TX,TE,MTX --identities ALL --data_type TRADING --max_workers 5 --delay 1.0
+python taifex_crawler.py --date-range today --contracts TX,TE,MTX,ZMX,NQF --identities ALL --data_type TRADING --max_workers 5 --delay 1.0 --check_days 7
 
 echo.
 echo 爬取完成！資料已上傳到Google Sheets的「交易量資料」分頁

@@ -38,11 +38,12 @@ jobs:
       run: |
         python taifex_crawler.py \
           --date-range today \
-          --contracts TX,TE,MTX \
+          --contracts TX,TE,MTX,ZMX,NQF \
           --identities ALL \
           --data_type TRADING \
           --max_workers 5 \
-          --delay 1.0
+          --delay 1.0 \
+          --check_days 7
     
     - name: 📁 上傳爬取結果
       uses: actions/upload-artifact@v4

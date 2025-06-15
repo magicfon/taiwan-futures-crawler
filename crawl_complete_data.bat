@@ -5,7 +5,7 @@ echo ===========================================
 echo 正在爬取今日完整資料 (包含交易量和未平倉)...
 echo.
 
-python taifex_crawler.py --date-range today --contracts TX,TE,MTX --identities ALL --data_type COMPLETE --max_workers 5 --delay 1.0
+python taifex_crawler.py --date-range today --contracts TX,TE,MTX,ZMX,NQF --identities ALL --data_type COMPLETE --max_workers 5 --delay 1.0 --check_days 7
 
 echo.
 echo 爬取完成！完整資料已上傳到Google Sheets的「完整資料」分頁
